@@ -29,7 +29,7 @@ struct FileExpandedView: View {
 
                 // Card with pieces grid
                 VStack {
-                    LazyVGrid(columns: columns, spacing: 12) {
+                    LazyVGrid(columns: columns, spacing: 24) {
                         ForEach(collection.orderedPieces) { piece in
                             PieceCardView(
                                 piece: piece,

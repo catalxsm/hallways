@@ -19,10 +19,7 @@ struct FeedView: View {
                 Group {
                     switch viewMode {
                     case .minimalist:
-                        MinimalistView(
-                            standalonePieces: standalonePieces,
-                            collections: collections
-                        )
+                        MinimalistView(collections: collections)
                     case .file:
                         FileView(
                             standalonePieces: standalonePieces,
@@ -64,6 +61,7 @@ struct FeedView: View {
                         }
                     }
                     .transition(.opacity)
+                    .zIndex(1)
                 }
             }
             .navigationDestination(for: Collection.self) { collection in

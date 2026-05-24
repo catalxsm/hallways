@@ -17,8 +17,10 @@ struct HallwaysTheme {
     static let gridSpacing: CGFloat = 16
     static let expandedCardCornerRadius: CGFloat = 20
     static let pieceCardHeight: CGFloat = 200
-    static let minimalistRowHeight: CGFloat = 210
-    static let collectionRowHeight: CGFloat = 210
+    static let minimalistRowHeight: CGFloat = 150
+    static let collectionRowHeight: CGFloat = 150
+    static let collectionTiltPattern: [Double] = [-6, 0, 5]
+    static let collectionVerticalScatter: CGFloat = 10
     static let fileGridItemHeight: CGFloat = 150
     static let stackPreviewSize: CGFloat = 80
 }

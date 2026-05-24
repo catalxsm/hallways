@@ -28,10 +28,11 @@ struct SampleDataProvider {
         let outdoorEyes = Piece(type: .media, imageFileName: "eyes-at-the-beach", sortOrder: 0)
         let outdoorPark = Piece(type: .media, imageFileName: "park-w-friends", sortOrder: 1)
         let outdoorWater = Piece(type: .media, imageFileName: "water-in-guatamala", sortOrder: 2)
+        let outdoorSelfie = Piece(type: .media, imageFileName: "selfie-retro-cam", sortOrder: 3)
 
         let outdoorLife = Collection(
             title: "outdoor life",
-            pieces: [outdoorEyes, outdoorPark, outdoorWater],
+            pieces: [outdoorEyes, outdoorPark, outdoorWater, outdoorSelfie],
             lastEditedAt: dateFrom(month: 10, day: 29, year: 2025),
             sortOrder: 0
         )
@@ -58,10 +59,11 @@ struct SampleDataProvider {
         )
         let innerModeling = Piece(type: .media, imageFileName: "modeling", sortOrder: 1)
         let innerAshtray = Piece(type: .media, imageFileName: "ashtray-crashout", sortOrder: 2)
+        let innerSelfie = Piece(type: .media, imageFileName: "selfie-retro-cam", sortOrder: 3)
 
         let innerChild = Collection(
             title: "inner child",
-            pieces: [innerText, innerModeling, innerAshtray],
+            pieces: [innerText, innerModeling, innerAshtray, innerSelfie],
             lastEditedAt: dateFrom(month: 10, day: 29, year: 2025),
             sortOrder: 1
         )

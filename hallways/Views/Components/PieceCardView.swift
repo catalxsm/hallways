@@ -3,7 +3,7 @@ import SwiftUI
 struct PieceCardView: View {
     let piece: Piece
     var tiltAngle: Double? = nil
-    var cardHeight: CGFloat = HallwaysTheme.pieceCardHeight
+    var cardHeight: CGFloat? = HallwaysTheme.pieceCardHeight
     var cardWidth: CGFloat? = nil
 
     private var effectiveTilt: Double {
@@ -13,17 +13,7 @@ struct PieceCardView: View {
     var body: some View {
         Group {
             if piece.type == .media, let fileName = piece.imageFileName {
-                if let width = cardWidth {
-                    Image(fileName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: width, maxHeight: cardHeight)
-                } else {
-                    Image(fileName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(height: cardHeight)
-                }
+                mediaView(fileName: fileName)
             } else if piece.type == .text, let text = piece.textContent {
                 textCard(text: text)
             }
@@ -31,8 +21,25 @@ struct PieceCardView: View {
         .rotationEffect(.degrees(effectiveTilt))
     }
 
+    @ViewBuilder
+    private func mediaView(fileName: String) -> some View {
+        let image = Image(fileName)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+
+        if let width = cardWidth, let height = cardHeight {
+            image.frame(maxWidth: width, maxHeight: height)
+        } else if let width = cardWidth {
+            image.frame(width: width)
+        } else if let height = cardHeight {
+            image.frame(height: height)
+        } else {
+            image
+        }
+    }
+
     private func textCard(text: String) -> some View {
-        let width = cardWidth ?? cardHeight
+        let (width, height) = textCardSize()
         return ZStack {
             Color(hex: "F5F0E8")
 
@@ -42,6 +49,22 @@ struct PieceCardView: View {
                 .multilineTextAlignment(.leading)
                 .padding(16)
         }
-        .frame(width: width, height: cardHeight)
+        .frame(width: width, height: height)
+    }
+
+    private func textCardSize() -> (CGFloat, CGFloat) {
+        if let w = cardWidth, let h = cardHeight {
+            return (w, h)
+        }
+        if let w = cardWidth {
+            // Width-only: portrait 3:4
+            return (w, w * 4.0 / 3.0)
+        }
+        if let h = cardHeight {
+            // Height-only: square
+            return (h, h)
+        }
+        let fallback = HallwaysTheme.pieceCardHeight
+        return (fallback, fallback)
     }
 }

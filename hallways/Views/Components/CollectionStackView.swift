@@ -7,8 +7,8 @@ struct CollectionStackView: View {
     var body: some View {
         VStack(spacing: 8) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(hex: "E0E0E0"), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(hex: "F2F2F2"))
                     .frame(width: size, height: size)
 
                 let pieces = Array(collection.orderedPieces.prefix(3))

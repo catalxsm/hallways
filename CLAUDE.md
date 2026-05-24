@@ -26,14 +26,21 @@ A journaling iOS app where users create "pieces" (text or media) and organize th
   - Card: `#EFEFEF` at 80% opacity (file expanded card)
   - Text card: `#F5F0E8` (parchment-like)
   - File expanded text (title, date, reorder): black (`HallwaysTheme.text`), not white
-- **Images:** No corner radius. Aspect ratio preserved (`.fit`). In collection rows and standalone minimalist pieces, images use fixed height with natural width (no `cardWidth`). In file grid and expanded grid, images use `maxWidth`/`maxHeight` constraints.
+- **Images:** No corner radius. Aspect ratio preserved (`.fit`). `PieceCardView` supports three sizing modes via optional `cardWidth: CGFloat?` / `cardHeight: CGFloat?`:
+  - Height-only (collection rows, file expanded): image uses `.frame(height:)` with natural width.
+  - Width-only (minimalist expanded list): image uses `.frame(width:)` with aspect-ratio-derived height; text cards use a 3:4 portrait ratio.
+  - Width + height (file grid, file expanded grid): image uses `.frame(maxWidth:, maxHeight:)`.
 - **Layout:**
-  - Uniform row height in minimalist view: 210pt for both standalone pieces and collection rows
-  - Collection row tilt: alternating positive/negative angles per item (even index = positive, odd = negative), magnitude from UUID hash (min 1.5°)
-  - Standalone piece tilt: from UUID hash (-3 to +3 degrees)
-  - Collection row overlap: -20pt spacing between items
-  - Collection rows: no title label displayed
-  - File grid: 2-column grid, collections have rounded-rect bounding box border (`#E0E0E0`)
+  - Minimalist view shows **collections only** (no standalone pieces). Standalone pieces appear in the file view.
+  - Collection row height: 150pt (`HallwaysTheme.collectionRowHeight`); spacing between rows: 72pt.
+  - Minimalist view outer leading padding: 16pt; collection row internal horizontal padding: 16pt.
+  - Collection row tilt pattern: cycles `[-6°, 0°, +5°]` per index (`HallwaysTheme.collectionTiltPattern`).
+  - Collection row vertical scatter: alternating ±10pt offset (`HallwaysTheme.collectionVerticalScatter`), even index = up, odd = down.
+  - Collection row z-order: rightmost piece on top (`zIndex(Double(index))`).
+  - Collection row overlap: -20pt spacing between items.
+  - Collection rows: no title label displayed.
+  - Minimalist expanded view: width-based sizing. Content width = screen width − 48pt (24pt × 2). Landscape images (`UIImage.size.width ≥ .size.height`) use full content width; portrait images and text pieces use 80% of content width. Pieces are centered via `.frame(maxWidth: .infinity)`.
+  - File grid: 2-column grid, collections have rounded-rect bounding box border (`#E0E0E0`).
 - **Toggle:** Black rounded rectangle (80x44) with white square indicator (30x30, 3pt padding). Left = minimalist, right = file mode. Animated slide on toggle.
 
 ## Architecture
@@ -43,6 +50,9 @@ A journaling iOS app where users create "pieces" (text or media) and organize th
 - `NavigationStack` with `navigationDestination` for drill-down into collections (minimalist expanded view)
 - File expanded view: ZStack overlay in `FeedView` with `.transition(.opacity)` fade-in (not `.fullScreenCover`). Overlay renders above the bottom bar (plus button + toggle). `selectedCollection` state lives in `FeedView`, passed as `@Binding` to `FileView`.
 - `FileExpandedView` takes an `onDismiss` closure (not `@Environment(\.dismiss)`)
+- Full-screen image viewer: ZStack overlay in `MinimalistExpandedView` with `.transition(.opacity)`. Tap a piece → `selectedPiece` state set → `ImageViewerView` overlays. Hero zoom via `matchedGeometryEffect` (shared `@Namespace heroNamespace`); source flips with `isSource: selectedPiece?.id != piece.id`. Works for both media and text pieces.
+- **Overlay z-index:** Both `FileExpandedView` (in `FeedView`) and `ImageViewerView` (in `MinimalistExpandedView`) have explicit `.zIndex(1)`. Without it, SwiftUI drops conditionally-rendered overlays behind their ZStack siblings during the exit half of `.transition(.opacity)`. Always pin overlays with `.zIndex` when using transitions.
+- `ImageViewerView` interactions: black bg (opacity fades with drag distance / 300); pinch-to-zoom via `UIPinchGestureRecognizer` wrapped in `UIGestureRecognizerRepresentable` (iOS 18+) — anchor is **pinned at `.began`** (gesture-start midpoint) and finger drift translates the image via a separate `pinchOffset`, mimicking Photos. Pinch snaps back to scale 1 / anchor center / offset zero on release via `withAnimation(.spring)`. Drag-to-dismiss accepts only positive `dx`/`dy` (down or right), threshold `hypot > 100`.
 
 ### Data Models
 
@@ -80,18 +90,19 @@ hallways/
   Theme/
     HallwaysTheme.swift                - Colors, opacity, layout constants, Font.specialElite(), Color(hex:)
   Views/
-    FeedView.swift                     - Root view: NavigationStack, view mode state, bottom bar, file expanded overlay
-    MinimalistView.swift               - Vertical scroll of standalone pieces + collection rows (uniform row height)
-    MinimalistExpandedView.swift       - Single-column piece list for a collection (nav push)
+    FeedView.swift                     - Root view: NavigationStack, view mode state, bottom bar, file expanded overlay (zIndex 1)
+    MinimalistView.swift               - Vertical scroll of collection rows only (no standalones); leading 16pt, row spacing 72pt
+    MinimalistExpandedView.swift       - Width-sized piece list; tap-to-view full-screen with matchedGeometryEffect hero
+    ImageViewerView.swift              - Full-screen viewer: black bg, hero zoom, Photos-style pinch (UIPinchGestureRecognizer via UIGestureRecognizerRepresentable), drag-down/right to dismiss
     FileView.swift                     - 2-column grid of standalone pieces + collection stacks
     FileExpandedView.swift             - Fade-in overlay with blurred bg, piece grid, title, date
     Components/
-      PieceCardView.swift              - Renders a single piece as image or styled text card (no corner radius)
-      CollectionRowView.swift          - Horizontal scroll of overlapping pieces (alternating tilt, no title)
+      PieceCardView.swift              - Renders a single piece as image or styled text card. Supports width-only, height-only, or both (cardWidth/cardHeight both optional)
+      CollectionRowView.swift          - Horizontal scroll of overlapping pieces; tilt cycles [-6°,0°,+5°], vertical scatter ±10pt, rightmost on top
       CollectionStackView.swift        - Mini stacked preview with bounding box border (for file grid)
       ViewModeToggle.swift             - Black rectangle toggle with sliding white square indicator
   SampleData/
-    SampleDataProvider.swift           - Seeds 2 standalone pieces + 2 collections on first launch
+    SampleDataProvider.swift           - Seeds 2 standalone pieces + 2 collections on first launch. `selfie-retro-cam` appears as standalone + in both collections (separate Piece instances sharing one asset)
   Resources/
     SpecialElite-Regular.ttf           - Custom typewriter font
   Assets.xcassets/                     - App icon + 9 sample images as imagesets
@@ -117,4 +128,11 @@ hallwaysUITests/
 - `@Model` classes for SwiftData entities
 - `@Query` and `@Environment(\.modelContext)` for data access in views
 - Special Elite font for all visible text
-- Xcode 16 project format with `PBXFileSystemSynchronizedRootGroup` (auto-discovers files)
+- Xcode 16 project format with `PBXFileSystemSynchronizedRootGroup` (auto-discovers files — new `.swift` files under `hallways/` need no project edit)
+
+## Gotchas
+
+- **Sample data seed gating:** `SampleDataProvider.seed` is guarded by `fetchCount(Piece) == 0`. Changes to seed data (e.g., adding a piece to a collection) require deleting the app from the simulator (long-press → Remove App) to take effect — the existing SwiftData store persists otherwise.
+- **`.offset` API:** SwiftUI `View.offset` is `offset(x:y:)` or `offset(CGSize)`. There is **no** `offset(width:height:)` initializer.
+- **ZStack + transitions:** always pin conditionally-rendered overlays with `.zIndex(1)` (or higher) when they use `.transition(...)`. Otherwise they fall behind siblings during the exit half of the animation.
+- **`matchedGeometryEffect` source flip:** the source view (`isSource: true`) defines the geometry; ghosts animate to it. For tap-to-expand overlays, flip the source on the list-side card via `isSource: selectedPiece?.id != piece.id` so the overlay owns geometry while presented.
