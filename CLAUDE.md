@@ -1,79 +1,151 @@
 # Hallways
 
-A journaling iOS app where users create "pieces" (text or media) and organize them into titled "collections." Think of it as a visual, scrapbook-style journal.
+A journaling iOS app where users create "pieces" (text or media) and organize them into titled "collections." Visual, scrapbook-style.
 
-## MVP Scope
+## Current State
 
-- **Private-only** -- no accounts, no sharing, no public profiles
-- Two view modes: **minimalist** (vertical scroll with overlapping tilted cards) and **file** (2-column grid with stacked previews)
-- Sample data seeds on first launch
-- Navigation into collections (expanded views)
-- No editing/creation flows yet (add button is non-functional)
-
-## Future Scope
-
-- Piece creation and editing (text + photo)
-- Collection management (reorder, rename, delete)
-- Public profiles and sharing
+- **Private-only** — no accounts, sharing, or public profiles.
+- Two feed view modes: **minimalist** (vertical scroll, overlapping tilted cards, collections only) and **file** (2-column grid with standalones + collection stacks).
+- **Create flow (upload media): complete.** Tap + on the feed → overlay with `upload media` / `writing` → PhotosPicker (multi-select, ordered, max 10) → editor screen → publish.
+- **Edit flow: complete.** Three-dots in `MinimalistExpandedView` → editor (prefilled) → update / delete.
+- **Drag-and-drop reorder + drag-to-delete:** Instagram-style real-time reorder in the editor carousel, drag-to-bottom for delete.
+- **Image viewer:** TabView paging between pieces, pinch-zoom, swipe-down to dismiss, edge-swipe-back gesture in `MinimalistExpandedView`.
+- **Splash:** OS launch screen + matching SwiftUI splash (both show the same cluster image + "means a lot you're here" tagline), then simple fade to feed.
+- **Writing flow:** still a no-op button. Future work.
 
 ## Design System
 
-- **Font:** Special Elite (monospace typewriter style), registered programmatically via `CTFontManager`
-- **Colors:**
-  - Background: `#FCFCFC`
-  - Text: `#121212`
-  - Overlay: `#7A7A7A` at 55% opacity + `.ultraThinMaterial` blur (file expanded background)
-  - Card: `#EFEFEF` at 80% opacity (file expanded card)
-  - Text card: `#F5F0E8` (parchment-like)
-  - File expanded text (title, date, reorder): black (`HallwaysTheme.text`), not white
-- **Images:** No corner radius. Aspect ratio preserved (`.fit`). `PieceCardView` supports three sizing modes via optional `cardWidth: CGFloat?` / `cardHeight: CGFloat?`:
-  - Height-only (collection rows, file expanded): image uses `.frame(height:)` with natural width.
-  - Width-only (minimalist expanded list): image uses `.frame(width:)` with aspect-ratio-derived height; text cards use a 3:4 portrait ratio.
-  - Width + height (file grid, file expanded grid): image uses `.frame(maxWidth:, maxHeight:)`.
-- **Layout:**
-  - Minimalist view shows **collections only** (no standalone pieces). Standalone pieces appear in the file view.
-  - Collection row height: 150pt (`HallwaysTheme.collectionRowHeight`); spacing between rows: 72pt.
-  - Minimalist view outer leading padding: 16pt; collection row internal horizontal padding: 16pt.
-  - Collection row tilt pattern: cycles `[-6°, 0°, +5°]` per index (`HallwaysTheme.collectionTiltPattern`).
-  - Collection row vertical scatter: alternating ±10pt offset (`HallwaysTheme.collectionVerticalScatter`), even index = up, odd = down.
-  - Collection row z-order: rightmost piece on top (`zIndex(Double(index))`).
-  - Collection row overlap: -20pt spacing between items.
-  - Collection rows: no title label displayed.
-  - Minimalist expanded view: width-based sizing. Content width = screen width − 48pt (24pt × 2). Landscape images (`UIImage.size.width ≥ .size.height`) use full content width; portrait images and text pieces use 80% of content width. Pieces are centered via `.frame(maxWidth: .infinity)`.
-  - File grid: 2-column grid, collections have rounded-rect bounding box border (`#E0E0E0`).
-- **Toggle:** Black rounded rectangle (80x44) with white square indicator (30x30, 3pt padding). Left = minimalist, right = file mode. Animated slide on toggle.
+### Fonts
+- **Special Elite** (typewriter, `SpecialElite-Regular`) — primary UI text. Registered via `UIAppFonts` in `Info.plist` (not programmatically — that was removed because it's redundant and skips the launch storyboard).
+- **Printvetica** (`PrintveticaRegular`) — used for CTA buttons in `CreateOverlay` and the date stamp in `MinimalistExpandedView`. Same registration mechanism.
+- Helpers: `Font.specialElite(size:)` and `Font.printvetica(size:)` in `HallwaysTheme.swift`.
+
+### Colors
+- Background: `#FCFCFC`
+- Text: `#121212`
+- Overlay (file expanded bg): `#7A7A7A` at 55% + `.ultraThinMaterial`
+- Card (file expanded): `#EFEFEF` at 80%
+- Text-piece card: `#F5F0E8` (parchment)
+- File expanded text: black (`HallwaysTheme.text`), not white
+- **Delete state (red footer):** `#9B1515`
+- **Date stamp (gray):** `#9F9F9F`
+
+### Image rendering — `PieceCardView`
+No corner radius, aspect ratio preserved (`.fit`), three sizing modes via optional `cardWidth`/`cardHeight`:
+- Height-only (collection rows, file expanded) → `.frame(height:)`, natural width
+- Width-only (minimalist expanded) → `.frame(width:)`, aspect-derived height; text uses 3:4 portrait
+- Both (file grid) → `.frame(maxWidth:, maxHeight:)`
+Loads via `ImageStorage.loadImage(named:)` — tries asset catalog first, falls back to `Documents/<filename>` for user-published photos.
+
+### Layout constants (`HallwaysTheme.swift`)
+- Minimalist view: collections only, leading 16pt, row spacing 72pt, collection row height 150pt
+- Collection row tilt cycles `[-6°, 0°, +5°]` per index; vertical scatter ±10pt (even up, odd down)
+- Collection row overlap: -20pt spacing; rightmost piece on top (`zIndex(Double(index))`)
+- Minimalist expanded: content width = screen − 48pt. Landscape uses full width; portrait + text use 80%. Pieces centered via `.frame(maxWidth: .infinity)`.
+- File grid: 2-column, collection stacks have rounded-rect border (`#E0E0E0`)
+
+### Toggle (`ViewModeToggle`)
+Black rounded rect (80×44), white square indicator (30×30, 3pt padding). Left = minimalist, right = file.
+
+### Date stamp (`MinimalistExpandedView`)
+Below the last photo in the expanded scroll. Printvetica 14pt, color `#9F9F9F`. Format: `yyyy.MM.dd   |   EEE HH:mm` (24h, locale pinned to `en_US_POSIX`, weekday uppercased). 8pt extra top padding (total 32pt from last photo via LazyVStack spacing).
 
 ## Architecture
 
-- **SwiftUI** for the UI layer
-- **SwiftData** for persistence (on-disk SQLite via `ModelContainer`)
-- `NavigationStack` with `navigationDestination` for drill-down into collections (minimalist expanded view)
-- File expanded view: ZStack overlay in `FeedView` with `.transition(.opacity)` fade-in (not `.fullScreenCover`). Overlay renders above the bottom bar (plus button + toggle). `selectedCollection` state lives in `FeedView`, passed as `@Binding` to `FileView`.
-- `FileExpandedView` takes an `onDismiss` closure (not `@Environment(\.dismiss)`)
-- Full-screen image viewer: ZStack overlay in `MinimalistExpandedView` with `.transition(.opacity)`. Tap a piece → `selectedPiece` state set → `ImageViewerView` overlays. Hero zoom via `matchedGeometryEffect` (shared `@Namespace heroNamespace`); source flips with `isSource: selectedPiece?.id != piece.id`. Works for both media and text pieces.
-- **Overlay z-index:** Both `FileExpandedView` (in `FeedView`) and `ImageViewerView` (in `MinimalistExpandedView`) have explicit `.zIndex(1)`. Without it, SwiftUI drops conditionally-rendered overlays behind their ZStack siblings during the exit half of `.transition(.opacity)`. Always pin overlays with `.zIndex` when using transitions.
-- `ImageViewerView` interactions: black bg (opacity fades with drag distance / 300); pinch-to-zoom via `UIPinchGestureRecognizer` wrapped in `UIGestureRecognizerRepresentable` (iOS 18+) — anchor is **pinned at `.began`** (gesture-start midpoint) and finger drift translates the image via a separate `pinchOffset`, mimicking Photos. Pinch snaps back to scale 1 / anchor center / offset zero on release via `withAnimation(.spring)`. Drag-to-dismiss accepts only positive `dx`/`dy` (down or right), threshold `hypot > 100`.
+### Data
+- **SwiftData** via `ModelContainer` in `hallwaysApp.swift` (on-disk SQLite).
+- `@Query` + `@Environment(\.modelContext)` for view-side access.
+- `Piece` and `Collection` `@Model` classes (see below).
+
+### Navigation
+- `NavigationStack` in `FeedView`. `navigationDestination(for: Collection.self)` → `MinimalistExpandedView`.
+- Overlays use ZStack + `.transition(.opacity)` + explicit `.zIndex` (always pin overlays with zIndex when using transitions, otherwise SwiftUI drops them mid-exit).
+
+### Overlays in `FeedView` (root)
+ZStack zIndex layers:
+- 0: feed content (MinimalistView or FileView)
+- (bottom bar HStack: plus + ViewModeToggle, padded)
+- 1: `FileExpandedView` (when `selectedCollection` set)
+- 2: `CreateOverlay` (when `showCreateOverlay && editingPhotos == nil`)
+- 3: `CreateEditView` (when `editingPhotos != nil`)
+- 4: `PublishCurtainView` (when `publishingPayload != nil`)
+
+### Overlays in `MinimalistExpandedView`
+ZStack:
+- 0: vertical piece list (`ScrollViewReader` + `LazyVStack`, each card with `.id(piece.id)` for proxy scrolling)
+- 1: `ImageViewerView` (when `selectedPiece != nil`)
+- 2: `CreateEditView` in edit mode (when `showEditor`)
+- 3: `PublishCurtainView` label "update" (when `updatePayload != nil`)
+- 50: invisible 20pt left-edge strip with DragGesture for edge-swipe-back (only mounted when no overlay is up)
+- Toolbar visibility: `chromeVisibility` hides the nav bar when viewer or editor is open.
+- Tracks `lastInteractedID` to keep the exiting hero card layered above siblings during the matchedGeometry return.
+
+### Create / edit flow
+- `CreateOverlay` — white blur over feed, two CTAs (`upload media` / `writing`), chevron-down dismiss. Printvetica buttons.
+- `CreateEditView` — shared by both modes via `EditorMode` enum (`.create` / `.edit(Collection)`):
+  - Top bar: X (cancel, with "are you sure?" prompt) + title TextField (placeholder `[untitled collection]`, empty title is saved as empty) + trash (edit only, "delete this collection?" prompt).
+  - Horizontal `LazyHStack` carousel with `.scrollPosition(id:)` for programmatic edge auto-scroll. Cards sized by aspect: landscape ≤ 300pt wide, portrait ≤ 360pt tall.
+  - Trailing `+` button to add more (re-opens PhotosPicker, capped at 10 total).
+  - Bottom publish footer using `PublishSemicircleShape` (curve facing up), pinned via `safeAreaInset(.bottom)` + `.ignoresSafeArea(.keyboard, edges: .bottom)` so keyboard doesn't collapse it.
+  - `PhotoDraft` struct carries the in-flight image plus optional `existingPieceID`/`existingFilename` so edit-mode diffs can tell new from existing.
+- `PublishCurtainView` — rise / hold / exit-up animation. Parameterized `label: String` ("publish" or "update"). Uses `max(geo.size.height, UIScreen.main.bounds.height)` for the curtain so a keyboard-shrunk safe area doesn't undersize it. Calls `onRiseComplete` mid-animation (parent persists + dismisses editor) and `onComplete` at end (parent drops the curtain overlay).
+- `PublishSemicircleShape` — `Shape` with `topCurveHeight` + `bottomCurveHeight` animatable via `AnimatablePair`. Control points sit *outside* the rect so curves bulge outward (upward dome on top, downward dome on bottom).
+
+### Persistence on save (FeedView / MinimalistExpandedView)
+- **Create:** each `UIImage` → `ImageStorage.saveJPEG` → new `Piece` with that filename → new `Collection(title, pieces, sortOrder: minExistingSortOrder - 1)` → insert + save. New collection appears at top because `@Query(sort: \Collection.sortOrder)` ascends.
+- **Update (edit):** diff `drafts` against `collection.pieces` by `existingPieceID`. Removed → `modelContext.delete(piece)` + `ImageStorage.deleteImage(named:)`. New → save JPEG + append `Piece`. Existing → just update `sortOrder = index`. Update `title` + `lastEditedAt`.
+- **Delete collection:** delete every piece's JPEG, `modelContext.delete(collection)` (cascade), save, `dismiss()` to pop the nav back to the feed.
+
+### Drag-and-drop in the editor carousel (Instagram-style)
+**Use the UIKit gesture bridge — do not go back to SwiftUI's `LongPressGesture.sequenced(before:)`.** The SwiftUI version conflicts with `ScrollView` pan in ways that can't be reconciled (`simultaneousGesture` leaves stuck `draggingID`, `.gesture` blocks scroll entirely).
+
+- `CardLongPressGesture: UIGestureRecognizerRepresentable` wraps `UILongPressGestureRecognizer` (`minimumPressDuration: 0.2`, `allowableMovement: 15`). UIKit natively handles "stillness for X seconds wins, movement wins for the scroll" — no manual coordination needed.
+- On `.began` → lift card immediately (ghost appears at 85% scale, shadow). On `.changed` → real-time reorder via `reorderIfHovering`: find the *other* card whose frame contains the finger's X, swap dragged item into that slot with a spring. Cards slide aside to make room. Track `editorGlobalFrame` and convert `recognizer.location(in: nil)` (window coords) → editor coords with `toEditor(_:)`.
+- Edge auto-scroll: only when finger is within 30pt of the carousel edge, advance `scrollAnchorID` to the dragged item's neighbor every 700ms (after 250ms warm-up). Real-time hover-reorder then targets the newly-revealed off-screen card.
+- Delete zone: finger Y > `editorSize.height * 0.75` (bottom 25%). Footer changes color to `#9B1515`, label to "delete", scales to 1.6×. Use `easeOut(0.22)` for the scale animation — `spring` overshoots below 1.0 and reveals a gap on the screen sides.
+- Header fades to opacity 0 while `draggingID != nil`.
+
+### Image viewer (`ImageViewerView`)
+- Takes `pieces: [Piece]` + `@Binding selectedPiece: Piece?`. Uses `TabView { ForEach } .tabViewStyle(.page(indexDisplayMode: .never))` for swipe-between pages.
+- **`matchedGeometryEffect` only on the current page** (`if isCurrent { ... } else { content }`). Off-screen pages with the modifier try to match their LazyVStack source-card geometry and cause "scatter" glitches during paging.
+- `MinimalistExpandedView` wraps `selectedPiece` in a binding that also updates `lastInteractedID` on swipe, so the hero exit always lands on whatever the user swiped to.
+- `ScrollViewReader` in `MinimalistExpandedView` auto-scrolls the LazyVStack to keep the swiped piece on-screen, so the hero animation has a real target.
+- Pinch via `UIPinchGestureRecognizer` (UIGestureRecognizerRepresentable) — anchor pinned at `.began`, finger drift offsets, springs back to 1.0 on release. Zoom state resets on page change.
+- Dismiss: tap, or vertical swipe-down. The swipe-down uses `.simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { ... })` with strict `dy > 80 && dy > abs(dx) * 2` check so it doesn't fight TabView's horizontal swipe.
+
+### Edge-swipe-back (`MinimalistExpandedView`)
+20pt invisible strip on the left edge with `DragGesture(minimumDistance: 10).onEnded { ... }` calling `dismiss()` on `translation.width > 60 && horizontal-dominant`. Mounted only when no overlay is active.
+
+### Splash + launch screen
+- **OS launch screen:** `LaunchScreen.storyboard` (in `hallways/Resources/`). Background `#FCFCFC`, cluster image (`splash-screen-img`) centered with a `lessThanOrEqual` 0.85 width constraint, **rasterized** tagline (`splash-tagline` imageset) 56pt below.
+  - **Why rasterized:** custom-font UILabels in launch storyboards often render in system font because `UIAppFonts` registration races the launch screen's first paint. Rasterizing "means a lot you're here" in Special Elite as PNGs (@1x/@2x/@3x via Python+Pillow) guarantees the exact font.
+  - **Simulator caches launch storyboards per bundle ID** — changes require `xcrun simctl shutdown && boot` to see; `uninstall` alone is not enough.
+- **SwiftUI splash:** `SplashView` mirrors the launch screen visually. `ContentView` shows it for 0.3s after launch, then fades it out with `easeOut(0.35)`. No curtain reveal animation (was removed for snappy launch).
 
 ### Data Models
 
-- **Piece** (`@Model`): id, type (.text/.media), textContent, imageFileName, imageData, sortOrder, createdAt, collection (inverse relationship). Computed `tilt` from UUID hash.
-- **Collection** (`@Model`): id, title, pieces (cascade delete), lastEditedAt, sortOrder. Computed `orderedPieces` sorted by sortOrder.
+- **`Piece`** (`@Model`): id, type (`.text`/`.media`), textContent, imageFileName, imageData, sortOrder, createdAt, collection (inverse). Computed `tilt: Double` from UUID hash (-3...3).
+- **`Collection`** (`@Model`): id, title, pieces (`@Relationship(deleteRule: .cascade, inverse: \Piece.collection)`), lastEditedAt, sortOrder. Computed `orderedPieces` sorted by `sortOrder`.
 
 ## Build & Run
 
-Open `hallways.xcodeproj` in Xcode 16+ and run on a simulator or device (iOS 18+).
+Open `hallways.xcodeproj` in Xcode 16+. Run on iOS 18+ simulator/device.
 
-If `xcode-select` points to CommandLineTools instead of Xcode.app, prefix commands with:
+If `xcode-select` points to CommandLineTools, prefix with:
 ```
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
+### Info.plist
+**`Info.plist` lives at the project root**, not inside `hallways/`. It's a real plist file (not auto-generated):
+- `GENERATE_INFOPLIST_FILE = NO`
+- `INFOPLIST_FILE = Info.plist`
+- Contains `UIAppFonts`, `UILaunchStoryboardName = LaunchScreen`, scene manifest, supported orientations, etc.
+
+It's outside the `hallways/` synchronized group because `PBXFileSystemSynchronizedRootGroup` would otherwise auto-include it as a bundle resource AND set it as the app's Info.plist — causing a "Multiple commands produce Info.plist" build error.
+
 ## Test
 
-- Unit tests: `hallwaysTests` target (Swift Testing framework)
-- UI tests: `hallwaysUITests` target (XCTest)
-
-Run via Xcode (Cmd+U) or:
 ```
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -project hallways.xcodeproj -scheme hallways -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
@@ -81,58 +153,87 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test -projec
 ## Project Structure
 
 ```
+Info.plist                                - Custom Info.plist (not in hallways/ — see Gotchas)
 hallways/
-  hallwaysApp.swift                    - App entry point; ModelContainer, font registration, sample data seeding
-  ContentView.swift                    - Thin wrapper rendering FeedView with background color
+  hallwaysApp.swift                       - App entry: ModelContainer, sample data seed onAppear (fonts via UIAppFonts now, not programmatic)
+  ContentView.swift                       - Splash fade gate → FeedView
   Models/
-    Piece.swift                        - Piece data model (text or media)
-    Collection.swift                   - Collection data model (group of pieces)
+    Piece.swift                           - @Model: text/media, imageFileName, sortOrder, inverse to Collection
+    Collection.swift                      - @Model: title, pieces (cascade), lastEditedAt, sortOrder, orderedPieces
   Theme/
-    HallwaysTheme.swift                - Colors, opacity, layout constants, Font.specialElite(), Color(hex:)
+    HallwaysTheme.swift                   - Colors, layout constants, Font.specialElite/printvetica, Color(hex:)
+  Utilities/
+    ImageStorage.swift                    - saveJPEG(_:quality:) to Documents/<uuid>.jpg; loadImage(named:) asset → Documents fallback; deleteImage(named:)
   Views/
-    FeedView.swift                     - Root view: NavigationStack, view mode state, bottom bar, file expanded overlay (zIndex 1)
-    MinimalistView.swift               - Vertical scroll of collection rows only (no standalones); leading 16pt, row spacing 72pt
-    MinimalistExpandedView.swift       - Width-sized piece list; tap-to-view full-screen with matchedGeometryEffect hero
-    ImageViewerView.swift              - Full-screen viewer: black bg, hero zoom, Photos-style pinch (UIPinchGestureRecognizer via UIGestureRecognizerRepresentable), drag-down/right to dismiss
-    FileView.swift                     - 2-column grid of standalone pieces + collection stacks
-    FileExpandedView.swift             - Fade-in overlay with blurred bg, piece grid, title, date
+    FeedView.swift                        - NavigationStack root; bottom bar (plus + toggle); all create-flow overlays; publishCollection persists
+    MinimalistView.swift                  - Vertical scroll of collections (collection rows only)
+    MinimalistExpandedView.swift          - Per-collection scroll list with hero tap-to-view, date stamp, three-dots → editor, edge-swipe-back, ScrollViewReader for hero alignment, toolbar hide
+    ImageViewerView.swift                 - TabView paging viewer; matchedGeometry on current page only; vertical drag-down dismiss; pinch zoom
+    FileView.swift                        - 2-column grid: standalones + collection stacks
+    FileExpandedView.swift                - Blurred overlay with piece grid + title + date
+    SplashView.swift                      - Cluster image + Special Elite tagline (matches launch storyboard)
     Components/
-      PieceCardView.swift              - Renders a single piece as image or styled text card. Supports width-only, height-only, or both (cardWidth/cardHeight both optional)
-      CollectionRowView.swift          - Horizontal scroll of overlapping pieces; tilt cycles [-6°,0°,+5°], vertical scatter ±10pt, rightmost on top
-      CollectionStackView.swift        - Mini stacked preview with bounding box border (for file grid)
-      ViewModeToggle.swift             - Black rectangle toggle with sliding white square indicator
+      PieceCardView.swift                 - Renders piece as image (ImageStorage-backed) or text card
+      CollectionRowView.swift             - Overlapping horizontal scroll of cards with tilt + scatter
+      CollectionStackView.swift           - Mini 3-card stack preview for file grid
+      ViewModeToggle.swift                - Animated toggle
+    Create/
+      CreateOverlay.swift                 - White blur overlay; upload-media + writing CTAs (Printvetica); chevron-down dismiss
+      CreateEditView.swift                - Editor (create + edit modes); custom drag via CardLongPressGesture; Instagram-style reorder; delete zone; PhotoDraft struct; EditorMode enum
+      PublishSemicircleShape.swift        - Shape with topCurveHeight + bottomCurveHeight; control points outside rect for outward bulges; AnimatablePair
+      PublishCurtainView.swift            - Rise / hold / exit-up animation; parameterized label ("publish" / "update")
   SampleData/
-    SampleDataProvider.swift           - Seeds 2 standalone pieces + 2 collections on first launch. `selfie-retro-cam` appears as standalone + in both collections (separate Piece instances sharing one asset)
+    SampleDataProvider.swift              - Seeds 2 standalone pieces + 2 collections on first launch
   Resources/
-    SpecialElite-Regular.ttf           - Custom typewriter font
-  Assets.xcassets/                     - App icon + 9 sample images as imagesets
+    LaunchScreen.storyboard               - OS launch screen: cluster image + rasterized tagline
+    SpecialElite-Regular.ttf
+    Printvetica.otf
+  Assets.xcassets/
+    AppIcon, AccentColor, 9 sample images
+    splash-screen-img.imageset            - Cluster image (1x/2x/3x)
+    splash-tagline.imageset               - Rasterized "means a lot you're here" in Special Elite (1x/2x/3x) — used by launch storyboard
+    LaunchBackground.colorset             - #FCFCFC color for launch screen
   Preview Content/
-    Preview Assets.xcassets/
 hallwaysTests/
-  hallwaysTests.swift
 hallwaysUITests/
-  hallwaysUITests.swift
-  hallwaysUITestsLaunchTests.swift
 ```
 
 ## Asset Locations
 
-- **Design references:** `my-design-assets/references/` (4 Figma mockup PNGs)
-- **Source images:** `my-design-assets/images/` (9 hi-res image files + 1 text piece example)
-- **App icon source:** `my-design-assets/` or `~/Downloads/app cover.png`
-- **Font source:** `my-design-assets/fonts/SpecialElite-Regular.ttf`
+- **Design references:** `my-design-assets/references/`
+- **Source images:** `my-design-assets/images/`
+- **Fonts:** `my-design-assets/fonts/SpecialElite-Regular.ttf`, `Printvetica.otf`
+- **Splash branding:** `my-design-assets/branding/splash-screen-img.png`
 
 ## Code Style
 
-- Swift, SwiftUI declarative syntax
-- `@Model` classes for SwiftData entities
-- `@Query` and `@Environment(\.modelContext)` for data access in views
-- Special Elite font for all visible text
-- Xcode 16 project format with `PBXFileSystemSynchronizedRootGroup` (auto-discovers files — new `.swift` files under `hallways/` need no project edit)
+- Swift, SwiftUI declarative.
+- `@Model` SwiftData classes; `@Query` + `@Environment(\.modelContext)` for data access.
+- Special Elite for all visible text by default; Printvetica for CTAs and date stamp.
+- Xcode 16 project format with `PBXFileSystemSynchronizedRootGroup` (`.swift` files under `hallways/` are auto-discovered).
+- **Custom drag-and-drop in carousel uses UIKit gesture bridge** — see `CardLongPressGesture` in `CreateEditView.swift`. Don't replace with SwiftUI gestures.
 
 ## Gotchas
 
-- **Sample data seed gating:** `SampleDataProvider.seed` is guarded by `fetchCount(Piece) == 0`. Changes to seed data (e.g., adding a piece to a collection) require deleting the app from the simulator (long-press → Remove App) to take effect — the existing SwiftData store persists otherwise.
-- **`.offset` API:** SwiftUI `View.offset` is `offset(x:y:)` or `offset(CGSize)`. There is **no** `offset(width:height:)` initializer.
-- **ZStack + transitions:** always pin conditionally-rendered overlays with `.zIndex(1)` (or higher) when they use `.transition(...)`. Otherwise they fall behind siblings during the exit half of the animation.
-- **`matchedGeometryEffect` source flip:** the source view (`isSource: true`) defines the geometry; ghosts animate to it. For tap-to-expand overlays, flip the source on the list-side card via `isSource: selectedPiece?.id != piece.id` so the overlay owns geometry while presented.
+### SwiftUI / iOS quirks
+- **`.offset` API:** `.offset(x:y:)` or `.offset(CGSize)`. There is **no** `.offset(width:height:)`.
+- **ZStack + transitions:** always pin conditionally-rendered overlays with `.zIndex(1)` (or higher) when they use `.transition(...)`. Otherwise SwiftUI drops them behind siblings during the exit half of the animation.
+- **`matchedGeometryEffect` source flip:** the source view (`isSource: true`) defines geometry; ghosts animate to it. For tap-to-expand overlays, flip the source on the list-side card via `isSource: selectedPiece?.id != piece.id`. **Inside a TabView, only apply `matchedGeometryEffect` to the *currently visible* page** — off-screen pages with the modifier try to match their source's geometry and cause scatter glitches during paging.
+- **`scrollPosition(id:)` triggers layout passes** when mutated. If you set it inside a `withAnimation` block during an active SwiftUI gesture, the gesture can be silently cancelled (`@GestureState` resets). Defer such updates in a `Task` with a small `try? await Task.sleep(for: .milliseconds(60))`.
+- **UIScrollView vs SwiftUI gestures:** `.simultaneousGesture` with a long-press-then-drag combo often leaves stuck state (gesture cancellation by ScrollView's pan doesn't fire `onEnded`). Use `UIGestureRecognizerRepresentable` wrapping `UILongPressGestureRecognizer` — UIKit handles the coordination correctly.
+- **Footer scale springs:** if you scale a full-width footer via `scaleEffect(_:anchor: .bottom)` with a bouncy spring, the spring overshoots below 1.0 and reveals a gap between the footer and the screen edges. Use `easeOut` (monotonic) instead.
+- **Keyboard collapsing safeAreaInset content:** publish/update footer needs `.ignoresSafeArea(.keyboard, edges: .bottom)` or the keyboard pushes it out of view. Curtain animation should use `max(geo.size.height, UIScreen.main.bounds.height)` so a keyboard-shrunk reader doesn't undersize it.
+
+### Info.plist / build
+- **`INFOPLIST_KEY_*` build settings only support top-level keys.** They cannot populate sub-keys of `UILaunchScreen` (e.g., `UIImageName`). To customize the launch screen, use a real `Info.plist` (or `LaunchScreen.storyboard` via `INFOPLIST_KEY_UILaunchStoryboardName`).
+- **`Info.plist` placement with `PBXFileSystemSynchronizedRootGroup`:** keep it OUTSIDE the synchronized group (project root works). Otherwise Xcode both copies it as a bundle resource AND uses it as the app's Info.plist, causing a "Multiple commands produce Info.plist" build error.
+- **Custom fonts in launch storyboards:** `UIAppFonts` registers fonts before `application:didFinishLaunchingWithOptions:` but often loses the race against the launch storyboard's first render. Labels in `LaunchScreen.storyboard` will silently fall back to system font even with the correct PostScript name. **Rasterize text to PNG** (via Python+Pillow + the `.ttf` file) and use a `UIImageView` instead.
+- **Simulator launch-storyboard cache:** the simulator caches the rendered launch storyboard per bundle ID. Changes won't appear after a normal `xcrun simctl install`. Do `xcrun simctl shutdown booted && xcrun simctl boot ...` to clear it.
+
+### Data
+- **Sample data seed gating:** `SampleDataProvider.seed` is guarded by `fetchCount(Piece) == 0`. Changes to seed data require deleting the app from the simulator (long-press → Remove App, or `xcrun simctl uninstall`) — the existing SwiftData store persists otherwise.
+- **Newest-collection-at-top:** new collections are inserted with `sortOrder = minExistingSortOrder - 1`. The `@Query(sort: \Collection.sortOrder)` is ascending, so smaller sortOrder = appears first.
+- **PieceCardView + ImageViewerView both need `ImageStorage.loadImage`:** user-published photos live in `Documents/`. Asset catalog only contains the seed images. Both views must try the catalog first, then the Documents fallback.
+- **Sticky LSP "No such module 'UIKit'" warning:** common false positive from SourceKit when reading files outside Xcode's iOS toolchain context. The actual iOS build resolves UIKit fine. Trust `xcodebuild` over LSP diagnostics for cross-platform module errors.
+</content>
+</invoke>
