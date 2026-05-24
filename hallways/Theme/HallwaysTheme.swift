@@ -31,6 +31,10 @@ extension Font {
     static func specialElite(size: CGFloat) -> Font {
         .custom("SpecialElite-Regular", size: size)
     }
+
+    static func printvetica(size: CGFloat) -> Font {
+        .custom("PrintveticaRegular", size: size)
+    }
 }
 
 // MARK: - Color Hex Initializer

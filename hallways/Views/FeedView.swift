@@ -1,7 +1,11 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
+import UIKit
 
 struct FeedView: View {
+    @Environment(\.modelContext) private var modelContext
+
     @Query(filter: #Predicate<Piece> { $0.collection == nil },
            sort: \Piece.sortOrder)
     private var standalonePieces: [Piece]
@@ -11,6 +15,18 @@ struct FeedView: View {
 
     @State private var viewMode: ViewMode = .minimalist
     @State private var selectedCollection: Collection?
+
+    // Create flow state.
+    @State private var showCreateOverlay: Bool = false
+    @State private var showInitialPicker: Bool = false
+    @State private var initialPickerItems: [PhotosPickerItem] = []
+    @State private var editingPhotos: [UIImage]? = nil
+    @State private var publishingPayload: PublishingPayload? = nil
+
+    private struct PublishingPayload: Equatable {
+        let title: String
+        let images: [UIImage]
+    }
 
     var body: some View {
         NavigationStack {
@@ -31,9 +47,10 @@ struct FeedView: View {
 
                 // Bottom bar
                 HStack {
-                    // Add button
                     Button {
-                        // Non-functional for now
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showCreateOverlay = true
+                        }
                     } label: {
                         ZStack {
                             Circle()
@@ -47,13 +64,12 @@ struct FeedView: View {
 
                     Spacer()
 
-                    // View mode toggle
                     ViewModeToggle(viewMode: $viewMode)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
 
-                // File expanded overlay — on top of bottom bar
+                // File expanded overlay
                 if let collection = selectedCollection {
                     FileExpandedView(collection: collection) {
                         withAnimation(.easeInOut(duration: 0.3)) {
@@ -63,10 +79,127 @@ struct FeedView: View {
                     .transition(.opacity)
                     .zIndex(1)
                 }
+
+                // Create overlay (white blur with upload media / writing)
+                if showCreateOverlay {
+                    CreateOverlay(
+                        onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                showCreateOverlay = false
+                            }
+                        },
+                        onUploadMedia: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showCreateOverlay = false
+                            }
+                            initialPickerItems = []
+                            // Slight delay so the picker presents over the cleared overlay.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                showInitialPicker = true
+                            }
+                        },
+                        onWriting: {
+                            // Placeholder — writing flow not yet implemented.
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(2)
+                }
+
+                // CreateEditView shown once initial photos are selected.
+                if let photos = editingPhotos {
+                    CreateEditView(
+                        mode: .create,
+                        initialPhotos: photos,
+                        onCancel: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                editingPhotos = nil
+                            }
+                        },
+                        onSave: { title, drafts in
+                            publishingPayload = PublishingPayload(
+                                title: title,
+                                images: drafts.map { $0.image }
+                            )
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(3)
+                }
+
+                // Publish curtain (absorbs taps during animation).
+                if let payload = publishingPayload {
+                    PublishCurtainView(
+                        onRiseComplete: {
+                            publish(title: payload.title, images: payload.images)
+                            editingPhotos = nil
+                        },
+                        onComplete: {
+                            publishingPayload = nil
+                        }
+                    )
+                    .zIndex(4)
+                    .contentShape(Rectangle())
+                    .onTapGesture { /* swallow */ }
+                }
             }
             .navigationDestination(for: Collection.self) { collection in
                 MinimalistExpandedView(collection: collection)
             }
         }
+        .photosPicker(
+            isPresented: $showInitialPicker,
+            selection: $initialPickerItems,
+            maxSelectionCount: 10,
+            selectionBehavior: .ordered,
+            matching: .images
+        )
+        .onChange(of: initialPickerItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await loadInitialPhotos(items) }
+        }
+    }
+
+    // MARK: - Photo loading
+
+    private func loadInitialPhotos(_ items: [PhotosPickerItem]) async {
+        var loaded: [UIImage] = []
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let img = UIImage(data: data) {
+                loaded.append(img)
+            }
+        }
+        await MainActor.run {
+            initialPickerItems = []
+            guard !loaded.isEmpty else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                editingPhotos = loaded
+            }
+        }
+    }
+
+    // MARK: - Persist published collection
+
+    private func publish(title: String, images: [UIImage]) {
+        var pieces: [Piece] = []
+        for (index, image) in images.enumerated() {
+            guard let filename = try? ImageStorage.saveJPEG(image) else { continue }
+            let piece = Piece(
+                type: .media,
+                imageFileName: filename,
+                sortOrder: index
+            )
+            pieces.append(piece)
+        }
+        let minSort = collections.map(\.sortOrder).min() ?? 0
+        let collection = Collection(
+            title: title,
+            pieces: pieces,
+            lastEditedAt: Date(),
+            sortOrder: minSort - 1
+        )
+        modelContext.insert(collection)
+        try? modelContext.save()
     }
 }

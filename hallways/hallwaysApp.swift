@@ -35,8 +35,14 @@ struct hallwaysApp: App {
     }
 
     private func registerCustomFonts() {
-        if let fontURL = Bundle.main.url(forResource: "SpecialElite-Regular", withExtension: "ttf") {
-            CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+        let fonts: [(name: String, ext: String)] = [
+            ("SpecialElite-Regular", "ttf"),
+            ("Printvetica", "otf"),
+        ]
+        for font in fonts {
+            if let url = Bundle.main.url(forResource: font.name, withExtension: font.ext) {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
         }
     }
 }

@@ -2,44 +2,102 @@ import SwiftUI
 import UIKit
 
 struct ImageViewerView: View {
-    let piece: Piece
+    let pieces: [Piece]
+    @Binding var selectedPiece: Piece?
     let namespace: Namespace.ID
     let onDismiss: () -> Void
 
     @State private var scale: CGFloat = 1.0
     @State private var anchor: UnitPoint = .center
     @State private var pinchOffset: CGSize = .zero
-    @State private var dragOffset: CGSize = .zero
 
     var body: some View {
         ZStack {
             Color.black
-                .opacity(bgOpacity)
                 .ignoresSafeArea()
                 .onTapGesture { onDismiss() }
 
-            content
-                .matchedGeometryEffect(id: piece.id, in: namespace, isSource: true)
-                .scaleEffect(scale, anchor: anchor)
-                .offset(
-                    x: dragOffset.width + pinchOffset.width,
-                    y: dragOffset.height + pinchOffset.height
-                )
-                .gesture(LivePinchGesture(
-                    scale: $scale,
-                    anchor: $anchor,
-                    offset: $pinchOffset,
-                    onEnded: resetZoom
-                ))
-                .simultaneousGesture(dragGesture)
+            TabView(selection: pageSelection) {
+                ForEach(pieces) { piece in
+                    page(for: piece)
+                        .tag(Optional(piece.id))
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
         }
         .statusBarHidden(true)
+        // Swipe-down to dismiss. simultaneousGesture + onEnded-only means
+        // TabView's horizontal swipe still wins for horizontal drags; this
+        // only triggers when the gesture ends with a decisively-vertical-down
+        // translation, so it doesn't fight paging.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    if dy > 80 && dy > abs(dx) * 2 {
+                        onDismiss()
+                    }
+                }
+        )
+        .onChange(of: selectedPiece?.id) { _, _ in
+            resetZoom()
+        }
+    }
+
+    // Wraps selectedPiece as a UUID? binding for TabView's selection.
+    private var pageSelection: Binding<UUID?> {
+        Binding(
+            get: { selectedPiece?.id },
+            set: { newID in
+                selectedPiece = pieces.first(where: { $0.id == newID })
+            }
+        )
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func page(for piece: Piece) -> some View {
+        let isCurrent = selectedPiece?.id == piece.id
+        ZStack {
+            Color.clear
+            if isCurrent {
+                // Only the active page owns the matched geometry — off-screen
+                // pages would otherwise try to match their LazyVStack source
+                // card's geometry and cause the scatter glitch during paging.
+                content(for: piece)
+                    .matchedGeometryEffect(
+                        id: piece.id,
+                        in: namespace,
+                        isSource: true
+                    )
+                    .scaleEffect(scale, anchor: anchor)
+                    .offset(
+                        x: pinchOffset.width,
+                        y: pinchOffset.height
+                    )
+                    .gesture(LivePinchGesture(
+                        scale: $scale,
+                        anchor: $anchor,
+                        offset: $pinchOffset,
+                        onEnded: resetPinch
+                    ))
+            } else {
+                content(for: piece)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func content(for piece: Piece) -> some View {
         if piece.type == .media, let fileName = piece.imageFileName {
-            Image(fileName)
+            let resolved: Image = {
+                if let ui = ImageStorage.loadImage(named: fileName) {
+                    return Image(uiImage: ui)
+                }
+                return Image(fileName)
+            }()
+            resolved
                 .resizable()
                 .aspectRatio(contentMode: .fit)
         } else if piece.type == .text, let text = piece.textContent {
@@ -59,12 +117,7 @@ struct ImageViewerView: View {
         }
     }
 
-    private var bgOpacity: Double {
-        let distance = hypot(dragOffset.width, dragOffset.height)
-        return 1.0 - min(1.0, Double(distance / 300))
-    }
-
-    private func resetZoom() {
+    private func resetPinch() {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             scale = 1.0
             anchor = .center
@@ -72,24 +125,10 @@ struct ImageViewerView: View {
         }
     }
 
-    private var dragGesture: some Gesture {
-        DragGesture()
-            .onChanged { value in
-                dragOffset = CGSize(
-                    width: max(0, value.translation.width),
-                    height: max(0, value.translation.height)
-                )
-            }
-            .onEnded { _ in
-                let distance = hypot(dragOffset.width, dragOffset.height)
-                if distance > 100 {
-                    onDismiss()
-                } else {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        dragOffset = .zero
-                    }
-                }
-            }
+    private func resetZoom() {
+        scale = 1.0
+        anchor = .center
+        pinchOffset = .zero
     }
 }
 

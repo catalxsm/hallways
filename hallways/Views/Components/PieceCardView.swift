@@ -23,18 +23,24 @@ struct PieceCardView: View {
 
     @ViewBuilder
     private func mediaView(fileName: String) -> some View {
-        let image = Image(fileName)
+        let image: Image = {
+            if let ui = ImageStorage.loadImage(named: fileName) {
+                return Image(uiImage: ui)
+            }
+            return Image(fileName)
+        }()
+        let resizable = image
             .resizable()
             .aspectRatio(contentMode: .fit)
 
         if let width = cardWidth, let height = cardHeight {
-            image.frame(maxWidth: width, maxHeight: height)
+            resizable.frame(maxWidth: width, maxHeight: height)
         } else if let width = cardWidth {
-            image.frame(width: width)
+            resizable.frame(width: width)
         } else if let height = cardHeight {
-            image.frame(height: height)
+            resizable.frame(height: height)
         } else {
-            image
+            resizable
         }
     }
 
