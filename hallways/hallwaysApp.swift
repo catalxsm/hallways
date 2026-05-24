@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import CoreText
 
 @main
 struct hallwaysApp: App {
@@ -18,10 +17,6 @@ struct hallwaysApp: App {
         }
     }()
 
-    init() {
-        registerCustomFonts()
-    }
-
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -32,17 +27,5 @@ struct hallwaysApp: App {
                 }
         }
         .modelContainer(sharedModelContainer)
-    }
-
-    private func registerCustomFonts() {
-        let fonts: [(name: String, ext: String)] = [
-            ("SpecialElite-Regular", "ttf"),
-            ("Printvetica", "otf"),
-        ]
-        for font in fonts {
-            if let url = Bundle.main.url(forResource: font.name, withExtension: font.ext) {
-                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-            }
-        }
     }
 }

@@ -49,6 +49,13 @@ private struct CardFramesKey: PreferenceKey {
     }
 }
 
+private struct EditorFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 private let editorSpace = "editor"
 private let deleteColor = Color(hex: "9B1515")
 
@@ -69,32 +76,32 @@ struct CreateEditView: View {
 
     // Custom drag state.
     @State private var draggingID: UUID? = nil
-    @State private var dragLocation: CGPoint = .zero
+    @State private var dragLocation: CGPoint = .zero          // in editor coords
     @State private var dragTouchOffset: CGSize = .zero
-    @State private var didCaptureTouchOffset: Bool = false
-    @State private var cardFrames: [UUID: CGRect] = [:]
+    @State private var cardFrames: [UUID: CGRect] = [:]       // in editor coords
     @State private var editorSize: CGSize = .zero
+    @State private var editorGlobalFrame: CGRect = .zero      // in window coords
     @State private var isOverDeleteZone: Bool = false
 
-    // Edge-hold-to-reorder state.
-    @State private var edgeHoldDirection: Int = 0  // -1 left, 0 none, 1 right
-    @State private var edgeHoldTask: Task<Void, Never>? = nil
-
-    // Scroll position binding (iOS 17+) for programmatic auto-scroll.
+    // Edge auto-scroll state.
+    @State private var autoScrollDirection: Int = 0
+    @State private var autoScrollTask: Task<Void, Never>? = nil
     @State private var scrollAnchorID: UUID? = nil
 
     private let footerHeight: CGFloat = 40
     private let footerTopCurve: CGFloat = 48
     private let maxSelection: Int = 10
     private let titlePlaceholder: String = "[untitled collection]"
-    private let edgeHoldZone: CGFloat = 70
-    private let edgeInitialDelayMs: Int = 200
-    private let edgeStepIntervalMs: Int = 500
+
+    // Only the very edge of the carousel triggers auto-scroll.
+    private let edgeAutoScrollZone: CGFloat = 30
+    private let autoScrollInitialDelayMs: Int = 250
+    private let autoScrollIntervalMs: Int = 700
 
     private var deleteThresholdY: CGFloat {
-        // Bottom 35% of the editor triggers delete — much higher than the
-        // visible footer so it's easy to reach.
-        editorSize.height * 0.65
+        // Only the bottom 25% triggers delete — deep enough that mid-screen
+        // dragging never trips it.
+        editorSize.height * 0.75
     }
 
     var body: some View {
@@ -133,6 +140,13 @@ struct CreateEditView: View {
                 }
             }
             .coordinateSpace(name: editorSpace)
+            .background(
+                GeometryReader { innerGeo in
+                    Color.clear
+                        .preference(key: EditorFrameKey.self, value: innerGeo.frame(in: .global))
+                }
+            )
+            .onPreferenceChange(EditorFrameKey.self) { editorGlobalFrame = $0 }
             .onAppear { editorSize = geo.size }
             .onChange(of: geo.size) { _, newSize in editorSize = newSize }
         }
@@ -263,89 +277,77 @@ struct CreateEditView: View {
                 }
             )
             .id(draft.id)
-            .simultaneousGesture(longPressDragGesture(for: draft.id))
-    }
-
-    // MARK: - Long press + drag gesture
-
-    private func longPressDragGesture(for id: UUID) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.25)
-            .sequenced(before:
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(editorSpace))
-            )
-            .onChanged { value in
-                switch value {
-                case .first(true):
-                    beginLiftIfNeeded(for: id)
-                case .second(_, let drag):
-                    beginLiftIfNeeded(for: id)
-                    if let drag = drag {
-                        handleDragChanged(drag, for: id)
+            .gesture(
+                CardLongPressGesture(
+                    onBegan: { globalPoint in
+                        beginDrag(id: draft.id, globalPoint: globalPoint)
+                    },
+                    onChanged: { globalPoint in
+                        updateDrag(id: draft.id, globalPoint: globalPoint)
+                    },
+                    onEnded: { globalPoint in
+                        endDrag(id: draft.id, globalPoint: globalPoint)
+                    },
+                    onCancelled: {
+                        cancelDrag()
                     }
-                default:
-                    break
-                }
-            }
-            .onEnded { value in
-                if case .second(_, let drag?) = value {
-                    handleDragEnded(at: drag.location, for: id)
-                } else {
-                    cancelDrag()
-                }
-            }
+                )
+            )
     }
 
-    // Lifts the card to ghost state. Happens the moment the long press
-    // succeeds — before any movement — so users see immediate feedback.
-    private func beginLiftIfNeeded(for id: UUID) {
+    // MARK: - Drag handlers
+
+    private func beginDrag(id: UUID, globalPoint: CGPoint) {
         guard draggingID == nil else { return }
-        let center = cardFrames[id].map { CGPoint(x: $0.midX, y: $0.midY) } ?? .zero
-        dragLocation = center
-        dragTouchOffset = .zero
-        didCaptureTouchOffset = false
+        let editorPoint = toEditor(globalPoint)
+        let cardFrame = cardFrames[id]
+        // Offset between touch and the card's center so the ghost sticks where
+        // the user grabbed it, not jumping to center.
+        let offset: CGSize = cardFrame.map { frame in
+            CGSize(
+                width: editorPoint.x - frame.midX,
+                height: editorPoint.y - frame.midY
+            )
+        } ?? .zero
+        dragLocation = editorPoint
+        dragTouchOffset = offset
         withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
             draggingID = id
         }
     }
 
-    private func handleDragChanged(_ drag: DragGesture.Value, for id: UUID) {
-        // On the first drag value, compute the offset between the actual
-        // finger position and the card center so the ghost stays "anchored"
-        // where the user grabbed it.
-        if !didCaptureTouchOffset {
-            if let frame = cardFrames[id] {
-                dragTouchOffset = CGSize(
-                    width: drag.startLocation.x - frame.midX,
-                    height: drag.startLocation.y - frame.midY
-                )
-            }
-            didCaptureTouchOffset = true
-        }
-        dragLocation = drag.location
+    private func updateDrag(id: UUID, globalPoint: CGPoint) {
+        guard draggingID == id else { return }
+        let editorPoint = toEditor(globalPoint)
+        dragLocation = editorPoint
 
-        // Delete zone check (simple Y threshold).
-        let nowOverDelete = drag.location.y > deleteThresholdY
+        let nowOverDelete = editorPoint.y > deleteThresholdY
         if nowOverDelete != isOverDeleteZone {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) {
+            withAnimation(.easeOut(duration: 0.22)) {
                 isOverDeleteZone = nowOverDelete
             }
         }
 
-        // Edge-hold reorder (only when not over delete zone).
-        if !nowOverDelete {
-            let x = drag.location.x
-            let dir: Int
-            if x > editorSize.width - edgeHoldZone { dir = 1 }
-            else if x < edgeHoldZone { dir = -1 }
-            else { dir = 0 }
-            setEdgeHold(direction: dir)
-        } else {
-            setEdgeHold(direction: 0)
+        if nowOverDelete {
+            setAutoScroll(direction: 0)
+            return
         }
+
+        // Instagram-style real-time reorder: if the finger is over another
+        // card's frame, swap the dragged item into that slot.
+        reorderIfHovering(at: editorPoint, draggedID: id)
+
+        // Edge auto-scroll only at the very edge of the carousel.
+        let x = editorPoint.x
+        let dir: Int
+        if x > editorSize.width - edgeAutoScrollZone { dir = 1 }
+        else if x < edgeAutoScrollZone { dir = -1 }
+        else { dir = 0 }
+        setAutoScroll(direction: dir)
     }
 
-    private func handleDragEnded(at location: CGPoint, for id: UUID) {
-        setEdgeHold(direction: 0)
+    private func endDrag(id: UUID, globalPoint: CGPoint) {
+        setAutoScroll(direction: 0)
         if isOverDeleteZone {
             if let idx = drafts.firstIndex(where: { $0.id == id }) {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
@@ -353,47 +355,69 @@ struct CreateEditView: View {
                 }
             }
         }
-        // No release-time reorder — the array order has already been mutated
-        // by edge-hold swaps, so whatever position the ghost was in IS final.
         cancelDrag()
     }
 
     private func cancelDrag() {
-        setEdgeHold(direction: 0)
+        setAutoScroll(direction: 0)
         withAnimation(.easeOut(duration: 0.2)) {
             draggingID = nil
             isOverDeleteZone = false
         }
         dragTouchOffset = .zero
-        didCaptureTouchOffset = false
     }
 
-    // MARK: - Edge-hold reorder + auto-scroll
+    private func reorderIfHovering(at editorPoint: CGPoint, draggedID: UUID) {
+        guard let currentIdx = drafts.firstIndex(where: { $0.id == draggedID }) else { return }
+        for (idx, draft) in drafts.enumerated() where draft.id != draggedID {
+            guard let frame = cardFrames[draft.id] else { continue }
+            // Only check X (horizontal carousel) — finger can wander vertically
+            // without canceling the hover.
+            if editorPoint.x >= frame.minX && editorPoint.x <= frame.maxX {
+                if currentIdx != idx {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        let item = drafts.remove(at: currentIdx)
+                        drafts.insert(item, at: idx)
+                    }
+                }
+                return
+            }
+        }
+    }
 
-    private func setEdgeHold(direction: Int) {
-        guard direction != edgeHoldDirection else { return }
-        edgeHoldDirection = direction
-        edgeHoldTask?.cancel()
+    private func toEditor(_ globalPoint: CGPoint) -> CGPoint {
+        CGPoint(
+            x: globalPoint.x - editorGlobalFrame.minX,
+            y: globalPoint.y - editorGlobalFrame.minY
+        )
+    }
+
+    // MARK: - Edge auto-scroll
+
+    private func setAutoScroll(direction: Int) {
+        guard direction != autoScrollDirection else { return }
+        autoScrollDirection = direction
+        autoScrollTask?.cancel()
         guard direction != 0 else { return }
-        edgeHoldTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(edgeInitialDelayMs))
-            while !Task.isCancelled && edgeHoldDirection == direction {
-                stepSwap(direction: direction)
-                try? await Task.sleep(for: .milliseconds(edgeStepIntervalMs))
+        autoScrollTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(autoScrollInitialDelayMs))
+            while !Task.isCancelled && autoScrollDirection == direction {
+                stepAutoScroll(direction: direction)
+                try? await Task.sleep(for: .milliseconds(autoScrollIntervalMs))
             }
         }
     }
 
     @MainActor
-    private func stepSwap(direction: Int) {
+    private func stepAutoScroll(direction: Int) {
         guard let id = draggingID,
               let currentIdx = drafts.firstIndex(where: { $0.id == id }) else { return }
-        let targetIdx = currentIdx + direction
-        guard targetIdx >= 0 && targetIdx < drafts.count else { return }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            drafts.swapAt(currentIdx, targetIdx)
-            // Keep the dragged item's slot visible as it migrates.
-            scrollAnchorID = id
+        // Scroll to neighbor of the dragged item — reveals off-screen cards
+        // so hover-reorder can target them.
+        let neighborIdx = currentIdx + direction
+        guard neighborIdx >= 0 && neighborIdx < drafts.count else { return }
+        withAnimation(.easeInOut(duration: 0.4)) {
+            scrollAnchorID = drafts[neighborIdx].id
         }
     }
 
@@ -490,7 +514,7 @@ struct CreateEditView: View {
         }
         .frame(height: footerHeight)
         .scaleEffect(scale, anchor: .bottom)
-        .animation(.spring(response: 0.3, dampingFraction: 0.65), value: scale)
+        .animation(.easeOut(duration: 0.22), value: scale)
         .animation(.easeInOut(duration: 0.2), value: isDragging)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -584,6 +608,48 @@ struct CreateEditView: View {
             let toAdd = Array(loaded.prefix(remaining))
             drafts.append(contentsOf: toAdd.map { PhotoDraft(image: $0) })
             morePickerItems = []
+        }
+    }
+}
+
+// MARK: - UIKit-bridged long-press recognizer
+
+// Wraps UILongPressGestureRecognizer so it coexists naturally with the
+// ScrollView's pan: quick movement fails the long press (scroll wins),
+// stillness for `minimumPressDuration` triggers .began (drag mode wins).
+private struct CardLongPressGesture: UIGestureRecognizerRepresentable {
+    let onBegan: (CGPoint) -> Void
+    let onChanged: (CGPoint) -> Void
+    let onEnded: (CGPoint) -> Void
+    let onCancelled: () -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Void { () }
+
+    func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
+        let recognizer = UILongPressGestureRecognizer()
+        recognizer.minimumPressDuration = 0.2
+        recognizer.allowableMovement = 15
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UILongPressGestureRecognizer, context: Context) {}
+
+    func handleUIGestureRecognizerAction(
+        _ recognizer: UILongPressGestureRecognizer,
+        context: Context
+    ) {
+        let location = recognizer.location(in: nil)
+        switch recognizer.state {
+        case .began:
+            onBegan(location)
+        case .changed:
+            onChanged(location)
+        case .ended:
+            onEnded(location)
+        case .cancelled, .failed:
+            onCancelled()
+        default:
+            break
         }
     }
 }
