@@ -15,20 +15,16 @@
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
                             <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="splash-screen-img" translatesAutoresizingMaskIntoConstraints="NO" id="img-id">
-                                <rect key="frame" x="36" y="276" width="321" height="240"/>
-                            </imageView>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="splash-tagline" translatesAutoresizingMaskIntoConstraints="NO" id="tag-id">
-                                <rect key="frame" x="98" y="572" width="197" height="24"/>
+                                <rect key="frame" x="0" y="306" width="393" height="240"/>
                             </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
                         <color key="backgroundColor" red="0.9882352941" green="0.9882352941" blue="0.9882352941" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
                             <constraint firstItem="img-id" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="ic-x"/>
-                            <constraint firstItem="img-id" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="-30" id="ic-y"/>
-                            <constraint firstItem="img-id" firstAttribute="width" relation="lessThanOrEqual" secondItem="Ze5-6b-2t3" secondAttribute="width" multiplier="0.85" id="iw"/>
-                            <constraint firstItem="tag-id" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="tc-x"/>
-                            <constraint firstItem="tag-id" firstAttribute="top" secondItem="img-id" secondAttribute="bottom" constant="56" id="tc-top"/>
+                            <constraint firstItem="img-id" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="ic-y"/>
+                            <constraint firstItem="img-id" firstAttribute="width" secondItem="Ze5-6b-2t3" secondAttribute="width" id="iw"/>
+                            <constraint firstItem="img-id" firstAttribute="width" secondItem="img-id" secondAttribute="height" multiplier="1125:1227" id="iar"/>
                         </constraints>
                     </view>
                 </viewController>

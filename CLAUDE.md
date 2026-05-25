@@ -27,7 +27,7 @@ A journaling iOS app where users create "pieces" (text or media) and organize th
 - Card (file expanded): `#EFEFEF` at 80%
 - Text-piece card: `#F5F0E8` (parchment)
 - File expanded text: black (`HallwaysTheme.text`), not white
-- **Delete state (red footer):** `#9B1515`
+- **Delete state (red footer):** `#9B1515` (dragging, not yet hovering delete zone) / `#A11111` (hovering delete zone — "activated")
 - **Date stamp (gray):** `#9F9F9F`
 
 ### Image rendering — `PieceCardView`
@@ -102,7 +102,7 @@ ZStack:
 - `CardLongPressGesture: UIGestureRecognizerRepresentable` wraps `UILongPressGestureRecognizer` (`minimumPressDuration: 0.2`, `allowableMovement: 15`). UIKit natively handles "stillness for X seconds wins, movement wins for the scroll" — no manual coordination needed.
 - On `.began` → lift card immediately (ghost appears at 85% scale, shadow). On `.changed` → real-time reorder via `reorderIfHovering`: find the *other* card whose frame contains the finger's X, swap dragged item into that slot with a spring. Cards slide aside to make room. Track `editorGlobalFrame` and convert `recognizer.location(in: nil)` (window coords) → editor coords with `toEditor(_:)`.
 - Edge auto-scroll: only when finger is within 30pt of the carousel edge, advance `scrollAnchorID` to the dragged item's neighbor every 700ms (after 250ms warm-up). Real-time hover-reorder then targets the newly-revealed off-screen card.
-- Delete zone: finger Y > `editorSize.height * 0.75` (bottom 25%). Footer changes color to `#9B1515`, label to "delete", scales to 1.6×. Use `easeOut(0.22)` for the scale animation — `spring` overshoots below 1.0 and reveals a gap on the screen sides.
+- Delete zone: finger Y > `editorSize.height * 0.75` (bottom 25%). On drag start the footer turns `#9B1515` with label "delete". When the finger enters the delete zone ("activated"), the footer's colored shape (`fillColor` rect + `PublishSemicircleShape`) scales 1.6× with anchor `.bottom` AND the color shifts to `#A11111`. The "delete" `Text` lives outside the scaled ZStack so it stays at the original 16pt size and bottom-anchored position — only the dome grows around it. Use `easeOut(0.22)` for the scale animation — `spring` overshoots below 1.0 and reveals a gap on the screen sides.
 - Header fades to opacity 0 while `draggingID != nil`.
 
 ### Image viewer (`ImageViewerView`)
@@ -117,10 +117,16 @@ ZStack:
 20pt invisible strip on the left edge with `DragGesture(minimumDistance: 10).onEnded { ... }` calling `dismiss()` on `translation.width > 60 && horizontal-dominant`. Mounted only when no overlay is active.
 
 ### Splash + launch screen
-- **OS launch screen:** `LaunchScreen.storyboard` (in `hallways/Resources/`). Background `#FCFCFC`, cluster image (`splash-screen-img`) centered with a `lessThanOrEqual` 0.85 width constraint, **rasterized** tagline (`splash-tagline` imageset) 56pt below.
-  - **Why rasterized:** custom-font UILabels in launch storyboards often render in system font because `UIAppFonts` registration races the launch screen's first paint. Rasterizing "means a lot you're here" in Special Elite as PNGs (@1x/@2x/@3x via Python+Pillow) guarantees the exact font.
-  - **Simulator caches launch storyboards per bundle ID** — changes require `xcrun simctl shutdown && boot` to see; `uninstall` alone is not enough.
-- **SwiftUI splash:** `SplashView` mirrors the launch screen visually. `ContentView` shows it for 0.3s after launch, then fades it out with `easeOut(0.35)`. No curtain reveal animation (was removed for snappy launch).
+**The OS launch screen and the SwiftUI splash MUST stay visually identical.** They are two separate files (`LaunchScreen.storyboard` and `SplashView.swift`) that the user sees back-to-back during launch — any divergence (different image, different layout, different background) is jarring. Treat them as one design with two implementations.
+
+- **Single source of truth:** both reference the same `splash-screen-img` imageset in `Assets.xcassets`. To change the splash artwork, update that one imageset (1x/2x/3x). Never let the two files point at different assets.
+- **Any layout change to one MUST be mirrored in the other** — width, centering, background color, padding. If you edit `SplashView.swift`, open `LaunchScreen.storyboard` in the same change (and vice versa) and update both.
+- **OS launch screen:** `LaunchScreen.storyboard` (in `hallways/Resources/`). Background `#FCFCFC`, cluster image (`splash-screen-img`) centered, full width (equal-width constraint to the root view).
+- **SwiftUI splash:** `SplashView` — same `#FCFCFC` background, same `splash-screen-img` at full width. `ContentView` shows it for 0.3s after launch, then fades it out with `easeOut(0.35)`. No curtain reveal animation (was removed for snappy launch).
+- **Safe-area trap:** `.ignoresSafeArea()` must be on the **outermost container** of `SplashView`, not just the background. The storyboard centers on the root view (true screen midpoint); a SwiftUI image that respects the safe area centers on the asymmetric safe-area rect and ends up ~12pt below the storyboard image on Dynamic Island devices — a visible jump during the splash crossfade.
+- **Full-width parity:** the storyboard imageView needs both a width-equal-to-root constraint AND an aspect-ratio constraint (`width:height = 1125:1227`, matching the @3x image pixels). Without the aspect constraint, autolayout keeps the imageView at intrinsic height (~409pt) and `scaleAspectFit` letterboxes the image to ~375pt wide. SwiftUI's `.resizable().aspectRatio(.fit).frame(maxWidth: .infinity)` renders true full-width by default, so without the storyboard constraint the two screens disagree on image size.
+- **Simulator caches launch storyboards per bundle ID** — changes to `LaunchScreen.storyboard` require `xcrun simctl shutdown booted && xcrun simctl boot ...` to see; `uninstall` alone is not enough. **If the two screens look different after a change, suspect this cache first** before assuming the assets are wrong.
+- **Custom fonts in launch storyboards don't work reliably** — `UIAppFonts` registration races the launch storyboard's first paint, so UILabels fall back to system font. If you ever need text on the launch screen, rasterize it to PNG (Python+Pillow + the `.ttf`) and add it as an `imageView`. The current splash has no text precisely to avoid this trap.
 
 ### Data Models
 
@@ -191,7 +197,7 @@ hallways/
   Assets.xcassets/
     AppIcon, AccentColor, 9 sample images
     splash-screen-img.imageset            - Cluster image (1x/2x/3x)
-    splash-tagline.imageset               - Rasterized "means a lot you're here" in Special Elite (1x/2x/3x) — used by launch storyboard
+    splash-tagline.imageset               - Unused. Was rasterized "means a lot you're here" tagline; both splash screens dropped the text. Safe to delete.
     LaunchBackground.colorset             - #FCFCFC color for launch screen
   Preview Content/
 hallwaysTests/

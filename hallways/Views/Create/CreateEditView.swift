@@ -58,6 +58,7 @@ private struct EditorFrameKey: PreferenceKey {
 
 private let editorSpace = "editor"
 private let deleteColor = Color(hex: "9B1515")
+private let deleteActiveColor = Color(hex: "A11111")
 
 struct CreateEditView: View {
     let mode: EditorMode
@@ -70,6 +71,7 @@ struct CreateEditView: View {
     @State private var title: String = ""
     @State private var showCancelConfirm: Bool = false
     @State private var showDeleteConfirm: Bool = false
+    @State private var deleteHoldProgress: Double = 0
     @State private var morePickerItems: [PhotosPickerItem] = []
     @State private var showMorePicker: Bool = false
     @State private var didSave: Bool = false
@@ -127,8 +129,9 @@ struct CreateEditView: View {
                 if showDeleteConfirm {
                     confirmPrompt(
                         message: "delete this collection?",
-                        yesLabel: "delete",
+                        yesLabel: "hold to delete",
                         noLabel: "cancel",
+                        holdToConfirm: true,
                         onYes: {
                             showDeleteConfirm = false
                             onDelete?()
@@ -493,19 +496,25 @@ struct CreateEditView: View {
 
     private var publishFooter: some View {
         let isDragging = draggingID != nil
-        let fillColor: Color = isDragging ? deleteColor : HallwaysTheme.text
+        let fillColor: Color = isDragging
+            ? (isOverDeleteZone ? deleteActiveColor : deleteColor)
+            : HallwaysTheme.text
         let label = isDragging ? "delete" : mode.footerLabel
         let scale: CGFloat = isOverDeleteZone ? 1.6 : 1.0
 
         return ZStack(alignment: .top) {
-            fillColor
-                .ignoresSafeArea(edges: .bottom)
+            ZStack(alignment: .top) {
+                fillColor
+                    .ignoresSafeArea(edges: .bottom)
 
-            PublishSemicircleShape(
-                topCurveHeight: footerTopCurve,
-                bottomCurveHeight: 0
-            )
-            .fill(fillColor)
+                PublishSemicircleShape(
+                    topCurveHeight: footerTopCurve,
+                    bottomCurveHeight: 0
+                )
+                .fill(fillColor)
+            }
+            .scaleEffect(scale, anchor: .bottom)
+            .animation(.easeOut(duration: 0.22), value: scale)
 
             Text(label)
                 .font(.specialElite(size: 16))
@@ -513,9 +522,8 @@ struct CreateEditView: View {
                 .padding(.top, 24)
         }
         .frame(height: footerHeight)
-        .scaleEffect(scale, anchor: .bottom)
-        .animation(.easeOut(duration: 0.22), value: scale)
         .animation(.easeInOut(duration: 0.2), value: isDragging)
+        .animation(.easeOut(duration: 0.22), value: isOverDeleteZone)
         .contentShape(Rectangle())
         .onTapGesture {
             guard !drafts.isEmpty, !didSave, draggingID == nil else { return }
@@ -540,6 +548,7 @@ struct CreateEditView: View {
         message: String,
         yesLabel: String,
         noLabel: String,
+        holdToConfirm: Bool = false,
         onYes: @escaping () -> Void,
         onNo: @escaping () -> Void
     ) -> some View {
@@ -557,16 +566,45 @@ struct CreateEditView: View {
                     .padding(.horizontal, 20)
 
                 HStack(spacing: 12) {
-                    Button(action: onYes) {
+                    if holdToConfirm {
                         Text(yesLabel)
                             .font(.specialElite(size: 16))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(HallwaysTheme.text)
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        Rectangle()
+                                            .fill(HallwaysTheme.text)
+                                        Rectangle()
+                                            .fill(deleteColor)
+                                            .frame(width: geo.size.width * deleteHoldProgress)
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             )
+                            .contentShape(Rectangle())
+                            .onLongPressGesture(minimumDuration: 3.0) {
+                                onYes()
+                                deleteHoldProgress = 0
+                            } onPressingChanged: { pressing in
+                                withAnimation(.linear(duration: pressing ? 3.0 : 0.2)) {
+                                    deleteHoldProgress = pressing ? 1 : 0
+                                }
+                            }
+                    } else {
+                        Button(action: onYes) {
+                            Text(yesLabel)
+                                .font(.specialElite(size: 16))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(HallwaysTheme.text)
+                                )
+                        }
                     }
 
                     Button(action: onNo) {
