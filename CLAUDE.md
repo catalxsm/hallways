@@ -11,7 +11,7 @@ A journaling iOS app where users create "pieces" (text or media) and organize th
 - **Drag-and-drop reorder + drag-to-delete:** Instagram-style real-time reorder in the editor carousel, drag-to-bottom for delete.
 - **Image viewer:** TabView paging between pieces, pinch-zoom, swipe-down to dismiss, edge-swipe-back gesture in `MinimalistExpandedView`.
 - **Splash:** OS launch screen + matching SwiftUI splash (both show the same cluster image + "means a lot you're here" tagline), then simple fade to feed.
-- **Writing flow:** still a no-op button. Future work.
+- **Writing flow: complete.** Tap + → `writing` CTA → green-paper editor with `tell me my love` placeholder → typewriter input with smart bullets → publish curtain → standalone text piece appears in File view → tap to re-open editor in `.edit` mode.
 
 ## Design System
 
@@ -26,6 +26,8 @@ A journaling iOS app where users create "pieces" (text or media) and organize th
 - Overlay (file expanded bg): `#7A7A7A` at 55% + `.ultraThinMaterial`
 - Card (file expanded): `#EFEFEF` at 80%
 - Text-piece card: `#F5F0E8` (parchment)
+- Writing editor background: `green-paper-bg` imageset (light olive paper texture)
+- Quarter-circle X backdrop (writing editor): `#FCFCFC` at 60% opacity
 - File expanded text: black (`HallwaysTheme.text`), not white
 - **Delete state (red footer):** `#9B1515` (dragging, not yet hovering delete zone) / `#A11111` (hovering delete zone — "activated")
 - **Date stamp (gray):** `#9F9F9F`
@@ -35,7 +37,7 @@ No corner radius, aspect ratio preserved (`.fit`), three sizing modes via option
 - Height-only (collection rows, file expanded) → `.frame(height:)`, natural width
 - Width-only (minimalist expanded) → `.frame(width:)`, aspect-derived height; text uses 3:4 portrait
 - Both (file grid) → `.frame(maxWidth:, maxHeight:)`
-Loads via `ImageStorage.loadImage(named:)` — tries asset catalog first, falls back to `Documents/<filename>` for user-published photos.
+Loads via `ImageStorage.loadImage(named:)` — tries asset catalog first, falls back to `Documents/<filename>` (downsampled via ImageIO at load time). Both code paths hit an `NSCache<NSString, UIImage>` keyed by filename so subsequent renders are cache hits (SwiftUI re-runs `body` constantly). Companion `ImageStorage.imageSize(named:)` reads pixel dimensions from the JPEG header without decoding (used by `MinimalistExpandedView.width(for:)` to pick portrait vs landscape sizing without paying the decode cost on every layout pass). `CollectionRowView` uses `LazyHStack` so off-screen cards in long collections aren't decoded up front.
 
 ### Layout constants (`HallwaysTheme.swift`)
 - Minimalist view: collections only, leading 16pt, row spacing 72pt, collection row height 150pt
@@ -66,9 +68,9 @@ ZStack zIndex layers:
 - 0: feed content (MinimalistView or FileView)
 - (bottom bar HStack: plus + ViewModeToggle, padded)
 - 1: `FileExpandedView` (when `selectedCollection` set)
-- 2: `CreateOverlay` (when `showCreateOverlay && editingPhotos == nil`)
-- 3: `CreateEditView` (when `editingPhotos != nil`)
-- 4: `PublishCurtainView` (when `publishingPayload != nil`)
+- 2: `CreateOverlay` (when `showCreateOverlay`)
+- 3: `CreateEditView` (when `editingPhotos != nil`) **or** `WritingEditorView` (when `showWritingCreate` for create / `editingTextPiece != nil` for edit)
+- 4: `PublishCurtainView` (media — when `publishingPayload != nil`; writing — when `publishingText != nil`, label `"publish"` for create / `"save"` for edit)
 
 ### Overlays in `MinimalistExpandedView`
 ZStack:
@@ -80,21 +82,44 @@ ZStack:
 - Toolbar visibility: `chromeVisibility` hides the nav bar when viewer or editor is open.
 - Tracks `lastInteractedID` to keep the exiting hero card layered above siblings during the matchedGeometry return.
 
-### Create / edit flow
+### Create / edit flow (media)
 - `CreateOverlay` — white blur over feed, two CTAs (`upload media` / `writing`), chevron-down dismiss. Printvetica buttons.
 - `CreateEditView` — shared by both modes via `EditorMode` enum (`.create` / `.edit(Collection)`):
-  - Top bar: X (cancel, with "are you sure?" prompt) + title TextField (placeholder `[untitled collection]`, empty title is saved as empty) + trash (edit only, "delete this collection?" prompt).
+  - Top bar: X (cancel, with "are you sure?" prompt) + title TextField (placeholder `[untitled collection]`, empty title is saved as empty) + trash (edit only, "delete this collection?" prompt — one-tap delete; the hold-to-delete progress bar was removed).
   - Horizontal `LazyHStack` carousel with `.scrollPosition(id:)` for programmatic edge auto-scroll. Cards sized by aspect: landscape ≤ 300pt wide, portrait ≤ 360pt tall.
   - Trailing `+` button to add more (re-opens PhotosPicker, capped at 10 total).
   - Bottom publish footer using `PublishSemicircleShape` (curve facing up), pinned via `safeAreaInset(.bottom)` + `.ignoresSafeArea(.keyboard, edges: .bottom)` so keyboard doesn't collapse it.
   - `PhotoDraft` struct carries the in-flight image plus optional `existingPieceID`/`existingFilename` so edit-mode diffs can tell new from existing.
+
+### Create / edit flow (writing)
+- `WritingEditorView` ([Views/Create/WritingEditorView.swift](hallways/Views/Create/WritingEditorView.swift)) — owns its own `Mode` enum (`.create` / `.edit(Piece)`); does NOT share `EditorMode` with `CreateEditView` because the surface area diverges too much.
+  - **Background:** `Image("green-paper-bg")` rendered via `.background(...)` on the root ZStack (NOT as a ZStack child — see Gotcha). `.ignoresSafeArea()` extends the paint to screen edges without pushing the ZStack's layout frame past safe area.
+  - **Top widgets** (each in its own overlay): `QuarterCircleShape` backdrop (130pt) anchored top-left with the X button inside (`.padding(.top, 60, .leading, 12)`); paper-bg picker placeholder (32pt circle, FCFCFC stroke, currently non-interactive) anchored top-right at the same y. Both overlays use `.ignoresSafeArea(edges: .top)` so they sit at the literal screen top regardless of safe area, and `.ignoresSafeArea(.keyboard)` so SwiftUI's auto-keyboard-avoidance doesn't push them off the top of the screen when the keyboard rises.
+  - **Body:** `BulletTextView` (UITextView bridge) filling the area between top widgets and footer, with `.padding(.top, 80)` and `.padding(.bottom, footerHeight + footerTopCurve)`. Special Elite 24pt, 40pt horizontal text-container insets. Placeholder `tell me my love` is a SwiftUI Text overlay with `.allowsHitTesting(false)` shown when `text.isEmpty && !isFocused`.
+  - **Footer:** same `PublishSemicircleShape` dome as media; positioned as a direct ZStack child anchored `.bottom` (NOT `safeAreaInset` — see Gotcha). Label `"publish"` for create, `"save"` for edit. No-op when text trimmed empty. Footer stays pinned at safe-area bottom even when keyboard rises (keyboard simply covers it; user dismisses keyboard first to tap publish).
+  - **Cancel:** if text is empty, X exits immediately. If text exists, X shows the same `"are you sure?"` prompt as media flow.
+  - **Persistence in `FeedView`:**
+    - `publishingText: PublishingText` payload carries `content` + optional `editingPieceID`.
+    - `persistText(payload:)` — for create: insert a standalone `Piece(type: .text, textContent:, sortOrder: min(collection.sortOrder, standalonePiece.sortOrder) - 1)` then `viewMode = .file`. For edit: fetch the Piece by ID and update `textContent`.
+    - Auto-switches to File view after create so the new text card is visible (standalone text pieces don't show in Minimalist mode, which is collection-only).
+- `BulletTextView` ([Views/Create/BulletTextView.swift](hallways/Views/Create/BulletTextView.swift)) — `UIViewRepresentable` wrapping `UITextView`:
+  - Bullet rules implemented in `textView(_:shouldChangeTextIn:replacementText:)`: `- ` at start of line → `• `; Enter on bulleted line → continues with `\n• `; Enter on empty `• ` line → strips the bullet; backspace inside empty `• ` line → strips the whole `• `.
+  - `tv.smartDashesType = .no` so iOS doesn't convert `--` to em-dash before our rule fires.
+  - `keyboardDismissMode = .interactive` so users can swipe the keyboard down.
+  - Internal keyboard observer in the Coordinator sets `contentInset.bottom = overlap + 40` so the cursor stays ≥40pt above the keyboard.
+  - **Dismiss-on-empty-tap recognizer:** custom `UITapGestureRecognizer` added to the UITextView with a delegate that gates `shouldReceive(touch:)` on **(a)** `textView.isFirstResponder` (so tapping an unfocused empty text view reliably focuses it instead of racing UITextView's built-in focus tap), and **(b)** the touch landing outside the rendered text bounds (`layoutManager.usedRect(for: textContainer)` + `textContainerInset`, with a 20pt "right next to" padding). When the gate passes, the handler calls `resignFirstResponder`. Net behavior: tap on / near text → cursor moves (UITextView default); tap anywhere else in the text view's frame → dismiss.
+- `QuarterCircleShape` ([Views/Create/QuarterCircleShape.swift](hallways/Views/Create/QuarterCircleShape.swift)) — tiny `Shape` drawing a pie slice anchored at the top-left corner.
+- `green-paper-bg.imageset` in `Assets.xcassets` — single universal scale; source PNG in `~/Downloads/green paper bg.png` (also tracked under design assets if needed).
 - `PublishCurtainView` — rise / hold / exit-up animation. Parameterized `label: String` ("publish" or "update"). Uses `max(geo.size.height, UIScreen.main.bounds.height)` for the curtain so a keyboard-shrunk safe area doesn't undersize it. Calls `onRiseComplete` mid-animation (parent persists + dismisses editor) and `onComplete` at end (parent drops the curtain overlay).
 - `PublishSemicircleShape` — `Shape` with `topCurveHeight` + `bottomCurveHeight` animatable via `AnimatablePair`. Control points sit *outside* the rect so curves bulge outward (upward dome on top, downward dome on bottom).
 
 ### Persistence on save (FeedView / MinimalistExpandedView)
-- **Create:** each `UIImage` → `ImageStorage.saveJPEG` → new `Piece` with that filename → new `Collection(title, pieces, sortOrder: minExistingSortOrder - 1)` → insert + save. New collection appears at top because `@Query(sort: \Collection.sortOrder)` ascends.
-- **Update (edit):** diff `drafts` against `collection.pieces` by `existingPieceID`. Removed → `modelContext.delete(piece)` + `ImageStorage.deleteImage(named:)`. New → save JPEG + append `Piece`. Existing → just update `sortOrder = index`. Update `title` + `lastEditedAt`.
+- **Create (media):** each `UIImage` → `ImageStorage.saveJPEG` → new `Piece` with that filename → new `Collection(title, pieces, sortOrder: minExistingSortOrder - 1)` → insert + save. New collection appears at top because `@Query(sort: \Collection.sortOrder)` ascends.
+- **Update (media edit):** diff `drafts` against `collection.pieces` by `existingPieceID`. Removed → `modelContext.delete(piece)` + `ImageStorage.deleteImage(named:)`. New → save JPEG + append `Piece`. Existing → just update `sortOrder = index`. Update `title` + `lastEditedAt`.
 - **Delete collection:** delete every piece's JPEG, `modelContext.delete(collection)` (cascade), save, `dismiss()` to pop the nav back to the feed.
+- **Create (text):** insert standalone `Piece(type: .text, textContent:, sortOrder: min(collection.sortOrder, standalonePiece.sortOrder) - 1)` (no Collection). `viewMode = .file` so the new card is visible.
+- **Update (text edit):** find piece by ID, set `textContent` to trimmed content, save.
+- **Standalone text pieces** are queried via `@Query(filter: #Predicate<Piece> { $0.collection == nil }, sort: \Piece.sortOrder)` and rendered in `FileView.standaloneItem` via `PieceCardView`. The tile is a `Button` that calls a callback (`onEditTextPiece`) wired up by FeedView to set `editingTextPiece = piece`.
 
 ### Drag-and-drop in the editor carousel (Instagram-style)
 **Use the UIKit gesture bridge — do not go back to SwiftUI's `LongPressGesture.sequenced(before:)`.** The SwiftUI version conflicts with `ScrollView` pan in ways that can't be reconciled (`simultaneousGesture` leaves stuck `draggingID`, `.gesture` blocks scroll entirely).
@@ -169,7 +194,7 @@ hallways/
   Theme/
     HallwaysTheme.swift                   - Colors, layout constants, Font.specialElite/printvetica, Color(hex:)
   Utilities/
-    ImageStorage.swift                    - saveJPEG(_:quality:) to Documents/<uuid>.jpg; loadImage(named:) asset → Documents fallback; deleteImage(named:)
+    ImageStorage.swift                    - saveJPEG(_:quality:); loadImage(named:) asset → Documents fallback w/ NSCache; imageSize(named:) JPEG-header-only dimensions w/ NSCache; deleteImage(named:) (invalidates both caches)
   Views/
     FeedView.swift                        - NavigationStack root; bottom bar (plus + toggle); all create-flow overlays; publishCollection persists
     MinimalistView.swift                  - Vertical scroll of collections (collection rows only)
@@ -185,9 +210,12 @@ hallways/
       ViewModeToggle.swift                - Animated toggle
     Create/
       CreateOverlay.swift                 - White blur overlay; upload-media + writing CTAs (Printvetica); chevron-down dismiss
-      CreateEditView.swift                - Editor (create + edit modes); custom drag via CardLongPressGesture; Instagram-style reorder; delete zone; PhotoDraft struct; EditorMode enum
+      CreateEditView.swift                - Media editor (create + edit modes); custom drag via CardLongPressGesture; Instagram-style reorder; delete zone; PhotoDraft struct; EditorMode enum
+      WritingEditorView.swift             - Text editor (create + edit modes); green-paper bg; quarter-circle X; paper-picker placeholder; publish/save footer; cancel confirm; Mode enum (.create / .edit(Piece))
+      BulletTextView.swift                - UITextView bridge: bullet rules, keyboard inset tracking, custom empty-area tap recognizer
+      QuarterCircleShape.swift            - Pie slice anchored top-left, used behind the writing-editor X button
       PublishSemicircleShape.swift        - Shape with topCurveHeight + bottomCurveHeight; control points outside rect for outward bulges; AnimatablePair
-      PublishCurtainView.swift            - Rise / hold / exit-up animation; parameterized label ("publish" / "update")
+      PublishCurtainView.swift            - Rise / hold / exit-up animation; parameterized label ("publish" / "save" / "update")
   SampleData/
     SampleDataProvider.swift              - Seeds 2 standalone pieces + 2 collections on first launch
   Resources/
@@ -198,6 +226,7 @@ hallways/
     AppIcon, AccentColor, 9 sample images
     splash-screen-img.imageset            - Cluster image (1x/2x/3x)
     splash-tagline.imageset               - Unused. Was rasterized "means a lot you're here" tagline; both splash screens dropped the text. Safe to delete.
+    green-paper-bg.imageset               - Writing editor background (single universal scale)
     LaunchBackground.colorset             - #FCFCFC color for launch screen
   Preview Content/
 hallwaysTests/
@@ -229,6 +258,9 @@ hallwaysUITests/
 - **UIScrollView vs SwiftUI gestures:** `.simultaneousGesture` with a long-press-then-drag combo often leaves stuck state (gesture cancellation by ScrollView's pan doesn't fire `onEnded`). Use `UIGestureRecognizerRepresentable` wrapping `UILongPressGestureRecognizer` — UIKit handles the coordination correctly.
 - **Footer scale springs:** if you scale a full-width footer via `scaleEffect(_:anchor: .bottom)` with a bouncy spring, the spring overshoots below 1.0 and reveals a gap between the footer and the screen edges. Use `easeOut` (monotonic) instead.
 - **Keyboard collapsing safeAreaInset content:** publish/update footer needs `.ignoresSafeArea(.keyboard, edges: .bottom)` or the keyboard pushes it out of view. Curtain animation should use `max(geo.size.height, UIScreen.main.bounds.height)` so a keyboard-shrunk reader doesn't undersize it.
+- **`.ignoresSafeArea()` on a ZStack child vs `.background()`:** putting a full-screen `.ignoresSafeArea()` view as a *ZStack child* pushes the ZStack's own layout frame out to the screen edge — any sibling positioned via `alignment: .bottom` then anchors at the screen bottom (under the home indicator) instead of the safe-area boundary. This is why an early `WritingEditorView` had its publish dome hidden by the rounded corners. **Fix:** put the bg image inside `.background(...)` instead. `.background` paints behind the view's bounds without altering the layout frame, so the ZStack stays inside safe area and `.bottom` aligns where you'd expect. The bg `.ignoresSafeArea()` still extends the paint visually to the screen edges. Same trap applies to `safeAreaInset` — a child that escapes safe area collapses the inset region.
+- **Keyboard avoidance shifts overlays off-screen:** SwiftUI's default auto-keyboard-avoidance lifts the entire view to make room for the keyboard. Anything pinned to the top (X button, paper-picker) gets pushed off the visible area. **Fix:** add `.ignoresSafeArea(.keyboard)` to each top overlay so it doesn't move when the keyboard rises (or put it on the root if you want to manage keyboard offset yourself). `WritingEditorView` uses both — root ignores keyboard so layout stays stable; `BulletTextView`'s UITextView handles its own `contentInset.bottom` to keep the cursor above the keyboard.
+- **UITextView empty-area-tap dismiss pattern:** to dismiss the keyboard by tapping inside the text view but outside the actual text, add a `UITapGestureRecognizer` to the UITextView with a delegate. In `gestureRecognizer(_:shouldReceive:)`, gate on both `tv.isFirstResponder` (otherwise it races UITextView's built-in focus-tap when keyboard is down, sometimes blocking the keyboard from coming up at all) AND `!textRect.insetBy(dx: -20, dy: -20).contains(touchLocation)` where `textRect` is `layoutManager.usedRect(for: textContainer)` offset by `textContainerInset`. Net behavior: tap on / near text → cursor moves (UITextView default); tap elsewhere → recognizer fires → `resignFirstResponder`.
 
 ### Info.plist / build
 - **`INFOPLIST_KEY_*` build settings only support top-level keys.** They cannot populate sub-keys of `UILaunchScreen` (e.g., `UIImageName`). To customize the launch screen, use a real `Info.plist` (or `LaunchScreen.storyboard` via `INFOPLIST_KEY_UILaunchStoryboardName`).
@@ -240,6 +272,7 @@ hallwaysUITests/
 - **Sample data seed gating:** `SampleDataProvider.seed` is guarded by `fetchCount(Piece) == 0`. Changes to seed data require deleting the app from the simulator (long-press → Remove App, or `xcrun simctl uninstall`) — the existing SwiftData store persists otherwise.
 - **Newest-collection-at-top:** new collections are inserted with `sortOrder = minExistingSortOrder - 1`. The `@Query(sort: \Collection.sortOrder)` is ascending, so smaller sortOrder = appears first.
 - **PieceCardView + ImageViewerView both need `ImageStorage.loadImage`:** user-published photos live in `Documents/`. Asset catalog only contains the seed images. Both views must try the catalog first, then the Documents fallback.
+- **Don't do image I/O inside SwiftUI `body`:** `ImageStorage.loadImage` is memoized via `NSCache`, so calling it from inside `body` is now safe-ish, but you still want the *first* render of an image to not be on the main thread if you can help it. Anywhere you only need width/height (e.g., `MinimalistExpandedView.width(for:)` picking portrait vs landscape sizing), use `ImageStorage.imageSize(named:)` — it reads JPEG headers via `CGImageSourceCopyPropertiesAtIndex` without decoding the bitmap.
 - **Sticky LSP "No such module 'UIKit'" warning:** common false positive from SourceKit when reading files outside Xcode's iOS toolchain context. The actual iOS build resolves UIKit fine. Trust `xcodebuild` over LSP diagnostics for cross-platform module errors.
 </content>
 </invoke>

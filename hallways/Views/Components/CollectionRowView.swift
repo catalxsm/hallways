@@ -9,7 +9,7 @@ struct CollectionRowView: View {
         let scatter = HallwaysTheme.collectionVerticalScatter
 
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: HallwaysTheme.overlapOffset) {
+            LazyHStack(spacing: HallwaysTheme.overlapOffset) {
                 ForEach(Array(pieces.enumerated()), id: \.element.id) { index, piece in
                     let tilt = tiltPattern[index % tiltPattern.count]
                     let yOffset: CGFloat = index.isMultiple(of: 2) ? -scatter : scatter

@@ -241,8 +241,8 @@ struct MinimalistExpandedView: View {
             return contentWidth * portraitWidthRatio
         }
         if let fileName = piece.imageFileName,
-           let image = ImageStorage.loadImage(named: fileName) {
-            return image.size.width >= image.size.height
+           let size = ImageStorage.imageSize(named: fileName) {
+            return size.width >= size.height
                 ? contentWidth
                 : contentWidth * portraitWidthRatio
         }

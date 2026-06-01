@@ -16,6 +16,24 @@ enum ImageStorage {
     /// Default longest-edge cap applied when loading user photos from disk.
     static let defaultLoadMaxPixel: CGFloat = 1200
 
+    /// Memory cache of decoded UIImages keyed by filename. SwiftUI re-evaluates
+    /// view bodies frequently; without this, each render re-decodes the JPEG
+    /// from disk via ImageIO on the main thread.
+    private static let imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 100
+        cache.totalCostLimit = 80 * 1024 * 1024
+        return cache
+    }()
+
+    /// Memory cache of image pixel dimensions, read from JPEG headers without
+    /// decoding the bitmap. Used by callers that only need width/height.
+    private static let sizeCache: NSCache<NSString, NSValue> = {
+        let cache = NSCache<NSString, NSValue>()
+        cache.countLimit = 500
+        return cache
+    }()
+
     static func saveJPEG(_ image: UIImage, quality: CGFloat = 0.85) throws -> String {
         let downsized = downsample(image, maxDimension: maxSaveDimension)
         guard let data = downsized.jpegData(compressionQuality: quality) else {
@@ -33,18 +51,54 @@ enum ImageStorage {
 
     /// Loads an image. Asset-catalog images are returned as-is (already small).
     /// User photos in Documents are decoded *downsampled* via ImageIO so we
-    /// never hold a full-resolution bitmap in memory.
+    /// never hold a full-resolution bitmap in memory. Both paths are cached.
     static func loadImage(named filename: String, maxPixel: CGFloat = defaultLoadMaxPixel) -> UIImage? {
+        let key = filename as NSString
+        if let cached = imageCache.object(forKey: key) {
+            return cached
+        }
         if let asset = UIImage(named: filename) {
+            imageCache.setObject(asset, forKey: key, cost: estimatedBytes(asset))
             return asset
         }
         let url = documentsURL().appendingPathComponent(filename)
-        return downsampledImage(at: url, maxPixel: maxPixel)
+        guard let image = downsampledImage(at: url, maxPixel: maxPixel) else {
+            return nil
+        }
+        imageCache.setObject(image, forKey: key, cost: estimatedBytes(image))
+        return image
+    }
+
+    /// Returns the image's displayed pixel dimensions without decoding the
+    /// bitmap. Reads the JPEG header for user photos; falls back to UIImage
+    /// for asset-catalog images.
+    static func imageSize(named filename: String) -> CGSize? {
+        let key = filename as NSString
+        if let cached = sizeCache.object(forKey: key) {
+            return cached.cgSizeValue
+        }
+        if let cached = imageCache.object(forKey: key) {
+            let size = cached.size
+            sizeCache.setObject(NSValue(cgSize: size), forKey: key)
+            return size
+        }
+        if let asset = UIImage(named: filename) {
+            let size = asset.size
+            sizeCache.setObject(NSValue(cgSize: size), forKey: key)
+            return size
+        }
+        let url = documentsURL().appendingPathComponent(filename)
+        guard let size = pixelSize(at: url) else { return nil }
+        sizeCache.setObject(NSValue(cgSize: size), forKey: key)
+        return size
     }
 
     static func deleteImage(named filename: String) {
         let url = documentsURL().appendingPathComponent(filename)
         try? FileManager.default.removeItem(at: url)
+        let key = filename as NSString
+        imageCache.removeObject(forKey: key)
+        sizeCache.removeObject(forKey: key)
     }
 
     // MARK: - Downsampling helpers
@@ -68,6 +122,32 @@ enum ImageStorage {
             return nil
         }
         return UIImage(cgImage: cgImage, scale: scale, orientation: .up)
+    }
+
+    /// Reads pixel width/height from an image's metadata without decoding the
+    /// bitmap. Honors EXIF orientation so the returned size matches what the
+    /// image will look like on screen.
+    private static func pixelSize(at url: URL) -> CGSize? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let widthNum = props[kCGImagePropertyPixelWidth] as? NSNumber,
+              let heightNum = props[kCGImagePropertyPixelHeight] as? NSNumber else {
+            return nil
+        }
+        let width = CGFloat(widthNum.doubleValue)
+        let height = CGFloat(heightNum.doubleValue)
+        let orientation = (props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        // EXIF orientations 5-8 swap the displayed axes.
+        return orientation >= 5
+            ? CGSize(width: height, height: width)
+            : CGSize(width: width, height: height)
+    }
+
+    private static func estimatedBytes(_ image: UIImage) -> Int {
+        let w = image.size.width * image.scale
+        let h = image.size.height * image.scale
+        return Int(w * h * 4)
     }
 
     /// Redraws a UIImage so its longest edge is at most `maxDimension` points.

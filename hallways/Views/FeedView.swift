@@ -23,9 +23,21 @@ struct FeedView: View {
     @State private var editingPhotos: [UIImage]? = nil
     @State private var publishingPayload: PublishingPayload? = nil
 
+    // Writing flow state.
+    @State private var showWritingCreate: Bool = false
+    @State private var editingTextPiece: Piece? = nil
+    @State private var publishingText: PublishingText? = nil
+
     private struct PublishingPayload: Equatable {
         let title: String
         let images: [UIImage]
+    }
+
+    private struct PublishingText: Equatable {
+        let content: String
+        let editingPieceID: UUID?
+
+        var label: String { editingPieceID == nil ? "publish" : "save" }
     }
 
     var body: some View {
@@ -40,7 +52,12 @@ struct FeedView: View {
                         FileView(
                             standalonePieces: standalonePieces,
                             collections: collections,
-                            selectedCollection: $selectedCollection
+                            selectedCollection: $selectedCollection,
+                            onEditTextPiece: { piece in
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    editingTextPiece = piece
+                                }
+                            }
                         )
                     }
                 }
@@ -99,7 +116,14 @@ struct FeedView: View {
                             }
                         },
                         onWriting: {
-                            // Placeholder — writing flow not yet implemented.
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showCreateOverlay = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    showWritingCreate = true
+                                }
+                            }
                         }
                     )
                     .transition(.opacity)
@@ -127,6 +151,46 @@ struct FeedView: View {
                     .zIndex(3)
                 }
 
+                // Writing editor — create mode.
+                if showWritingCreate {
+                    WritingEditorView(
+                        mode: .create,
+                        onCancel: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                showWritingCreate = false
+                            }
+                        },
+                        onSave: { content in
+                            publishingText = PublishingText(
+                                content: content,
+                                editingPieceID: nil
+                            )
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(3)
+                }
+
+                // Writing editor — edit mode.
+                if let piece = editingTextPiece {
+                    WritingEditorView(
+                        mode: .edit(piece),
+                        onCancel: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                editingTextPiece = nil
+                            }
+                        },
+                        onSave: { content in
+                            publishingText = PublishingText(
+                                content: content,
+                                editingPieceID: piece.id
+                            )
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(3)
+                }
+
                 // Publish curtain (absorbs taps during animation).
                 if let payload = publishingPayload {
                     PublishCurtainView(
@@ -136,6 +200,23 @@ struct FeedView: View {
                         },
                         onComplete: {
                             publishingPayload = nil
+                        }
+                    )
+                    .zIndex(4)
+                    .contentShape(Rectangle())
+                    .onTapGesture { /* swallow */ }
+                }
+
+                if let payload = publishingText {
+                    PublishCurtainView(
+                        label: payload.label,
+                        onRiseComplete: {
+                            persistText(payload: payload)
+                            showWritingCreate = false
+                            editingTextPiece = nil
+                        },
+                        onComplete: {
+                            publishingText = nil
                         }
                     )
                     .zIndex(4)
@@ -180,6 +261,29 @@ struct FeedView: View {
     }
 
     // MARK: - Persist published collection
+
+    private func persistText(payload: PublishingText) {
+        let trimmed = payload.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let pieceID = payload.editingPieceID,
+           let piece = (try? modelContext.fetch(FetchDescriptor<Piece>()))?
+            .first(where: { $0.id == pieceID }) {
+            piece.textContent = trimmed
+        } else {
+            let collectionMin = collections.map(\.sortOrder).min() ?? 0
+            let standaloneMin = standalonePieces.map(\.sortOrder).min() ?? 0
+            let nextSort = min(collectionMin, standaloneMin) - 1
+            let piece = Piece(
+                type: .text,
+                textContent: trimmed,
+                sortOrder: nextSort
+            )
+            modelContext.insert(piece)
+        }
+        try? modelContext.save()
+        viewMode = .file
+    }
 
     private func publish(title: String, images: [UIImage]) {
         var pieces: [Piece] = []

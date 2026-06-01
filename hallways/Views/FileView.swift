@@ -5,6 +5,7 @@ struct FileView: View {
     let standalonePieces: [Piece]
     let collections: [Collection]
     @Binding var selectedCollection: Collection?
+    var onEditTextPiece: (Piece) -> Void = { _ in }
 
     private let columns = [
         GridItem(.flexible(), spacing: HallwaysTheme.gridSpacing),
@@ -52,19 +53,33 @@ struct FileView: View {
         }
     }
 
+    @ViewBuilder
     private func standaloneItem(piece: Piece) -> some View {
-        VStack(spacing: 8) {
-            if piece.type == .media, let fileName = piece.imageFileName {
-                Image(fileName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: HallwaysTheme.fileGridItemHeight)
+        switch piece.type {
+        case .media:
+            VStack(spacing: 8) {
+                if let fileName = piece.imageFileName {
+                    Image(fileName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: HallwaysTheme.fileGridItemHeight)
+                }
+                Text(piece.imageFileName ?? "untitled")
+                    .font(.specialElite(size: 12))
+                    .foregroundColor(HallwaysTheme.text)
+                    .lineLimit(1)
             }
-
-            Text(piece.imageFileName ?? "untitled")
-                .font(.specialElite(size: 12))
-                .foregroundColor(HallwaysTheme.text)
-                .lineLimit(1)
+        case .text:
+            Button {
+                onEditTextPiece(piece)
+            } label: {
+                PieceCardView(
+                    piece: piece,
+                    tiltAngle: 0,
+                    cardHeight: HallwaysTheme.fileGridItemHeight
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 }

@@ -71,7 +71,6 @@ struct CreateEditView: View {
     @State private var title: String = ""
     @State private var showCancelConfirm: Bool = false
     @State private var showDeleteConfirm: Bool = false
-    @State private var deleteHoldProgress: Double = 0
     @State private var morePickerItems: [PhotosPickerItem] = []
     @State private var showMorePicker: Bool = false
     @State private var didSave: Bool = false
@@ -129,9 +128,8 @@ struct CreateEditView: View {
                 if showDeleteConfirm {
                     confirmPrompt(
                         message: "delete this collection?",
-                        yesLabel: "hold to delete",
+                        yesLabel: "delete",
                         noLabel: "cancel",
-                        holdToConfirm: true,
                         onYes: {
                             showDeleteConfirm = false
                             onDelete?()
@@ -548,7 +546,6 @@ struct CreateEditView: View {
         message: String,
         yesLabel: String,
         noLabel: String,
-        holdToConfirm: Bool = false,
         onYes: @escaping () -> Void,
         onNo: @escaping () -> Void
     ) -> some View {
@@ -566,45 +563,16 @@ struct CreateEditView: View {
                     .padding(.horizontal, 20)
 
                 HStack(spacing: 12) {
-                    if holdToConfirm {
+                    Button(action: onYes) {
                         Text(yesLabel)
                             .font(.specialElite(size: 16))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                             .background(
-                                GeometryReader { geo in
-                                    ZStack(alignment: .leading) {
-                                        Rectangle()
-                                            .fill(HallwaysTheme.text)
-                                        Rectangle()
-                                            .fill(deleteColor)
-                                            .frame(width: geo.size.width * deleteHoldProgress)
-                                    }
-                                }
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(HallwaysTheme.text)
                             )
-                            .contentShape(Rectangle())
-                            .onLongPressGesture(minimumDuration: 3.0) {
-                                onYes()
-                                deleteHoldProgress = 0
-                            } onPressingChanged: { pressing in
-                                withAnimation(.linear(duration: pressing ? 3.0 : 0.2)) {
-                                    deleteHoldProgress = pressing ? 1 : 0
-                                }
-                            }
-                    } else {
-                        Button(action: onYes) {
-                            Text(yesLabel)
-                                .font(.specialElite(size: 16))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(HallwaysTheme.text)
-                                )
-                        }
                     }
 
                     Button(action: onNo) {

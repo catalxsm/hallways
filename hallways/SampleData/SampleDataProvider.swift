@@ -39,31 +39,13 @@ struct SampleDataProvider {
         modelContext.insert(outdoorLife)
 
         // Collection: "inner child"
-        let innerText = Piece(
-            type: .text,
-            textContent: """
-            revive inner child:
-            - play tag on a playground
-            - color or paint for the \
-            sheer joy of it
-            - have ice cream for \
-            dinner
-            - try new things, learn a \
-            new skill
-            - go down a water slide
-            - watch cartoons on the \
-            weekend
-            - play dress with a dog
-            """,
-            sortOrder: 0
-        )
-        let innerModeling = Piece(type: .media, imageFileName: "modeling", sortOrder: 1)
-        let innerAshtray = Piece(type: .media, imageFileName: "ashtray-crashout", sortOrder: 2)
-        let innerSelfie = Piece(type: .media, imageFileName: "selfie-retro-cam", sortOrder: 3)
+        let innerModeling = Piece(type: .media, imageFileName: "modeling", sortOrder: 0)
+        let innerAshtray = Piece(type: .media, imageFileName: "ashtray-crashout", sortOrder: 1)
+        let innerSelfie = Piece(type: .media, imageFileName: "selfie-retro-cam", sortOrder: 2)
 
         let innerChild = Collection(
             title: "inner child",
-            pieces: [innerText, innerModeling, innerAshtray, innerSelfie],
+            pieces: [innerModeling, innerAshtray, innerSelfie],
             lastEditedAt: dateFrom(month: 10, day: 29, year: 2025),
             sortOrder: 1
         )
