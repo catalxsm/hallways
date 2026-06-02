@@ -85,29 +85,33 @@ ZStack:
 
 ### Create / edit flow (media)
 - `CreateOverlay` — white blur over feed, two CTAs (`upload media` / `writing`), chevron-down dismiss. Printvetica buttons.
-- `CreateEditView` — shared by both modes via `EditorMode` enum (`.create` / `.edit(Collection)`):
-  - Top bar: X (cancel, with "are you sure?" prompt) + title TextField (placeholder `[untitled collection]`, empty title is saved as empty) + trash (edit only, "delete this collection?" prompt — one-tap delete; the hold-to-delete progress bar was removed).
+- `CreateEditView` — shared by three modes via `EditorMode` enum (`.create` / `.edit(Collection)` / `.branch(initialDrafts:, onCommit:)`):
+  - Top bar: X (cancel, with "are you sure?" prompt) + title TextField (placeholder `[untitled collection]`, empty title is saved as empty) + trash (`.edit` only, "delete this collection?" prompt — one-tap delete; the hold-to-delete progress bar was removed). In `.branch` mode, X becomes chevron-left that auto-commits via `mode.branchCommit?(drafts); onCancel()`; title field and trash are hidden.
   - Horizontal `LazyHStack` carousel with `.scrollPosition(id:)` for programmatic edge auto-scroll. Cards sized by aspect: landscape ≤ 300pt wide, portrait ≤ 360pt tall.
-  - Trailing `+` button to add more (re-opens PhotosPicker, capped at 10 total).
-  - Bottom publish footer using `HalfMoonCTA` (curve facing up), pinned via `safeAreaInset(.bottom)` + `.ignoresSafeArea(.keyboard, edges: .bottom)` so keyboard doesn't collapse it.
+  - **Trailing `+` button** opens a chooser overlay (reuses `CreateOverlay` with `upload media` / `writing` CTAs). `upload media` → PhotosPicker (capped at 10 total). `writing` → presents `WritingEditorView(.branch)` whose `onCommit` writes to a local `@State draftText: String?`. In `.branch` mode (sub-screen of the combined edit overview), the chooser is skipped and `+` opens PhotosPicker directly.
+  - On publish, `onSave(title, drafts, textContent: String?)` carries the draftText through. In `.create`, FeedView attaches a text piece to the new collection if non-empty; in `.edit`, MinimalistExpandedView upserts/deletes the text piece on the existing collection. `.branch` mode never fires `onSave` — the dome is a permanent red `delete` zone (drag-to-delete-a-piece is unchanged) instead of a publish target.
+  - Bottom publish footer using `HalfMoonCTA` (curve facing up), pinned via `safeAreaInset(.bottom)` + `.ignoresSafeArea(.keyboard, edges: .bottom)` so keyboard doesn't collapse it. In `.branch` mode, the same dome is permanently red (`#9B1515` / `#A11111` on drag) with label `delete` — the publish tap is gated by `guard !mode.isBranch`.
   - `PhotoDraft` struct carries the in-flight image plus optional `existingPieceID`/`existingFilename` so edit-mode diffs can tell new from existing.
 
 ### Create / edit flow (writing)
-- `WritingEditorView` ([Views/Create/WritingEditorView.swift](hallways/Views/Create/WritingEditorView.swift)) — owns its own `Mode` enum (`.create` / `.edit(Piece)`); does NOT share `EditorMode` with `CreateEditView` because the surface area diverges too much.
+- `WritingEditorView` ([Views/Create/WritingEditorView.swift](hallways/Views/Create/WritingEditorView.swift)) — owns its own `Mode` enum (`.create` / `.edit(Piece)` / `.branch(initialText:, onCommit:)`); does NOT share `EditorMode` with `CreateEditView` because the surface area diverges too much. `.branch` is the sub-screen used inside `CollectionEditOverviewView`: no publish/save footer, chevron-left back arrow that calls `onCommit(text); onCancel()`, trash hidden, `bottomClearance` reset to default 24 (no dome to clip under).
   - **Background:** `Image("green-paper-bg")` rendered via `.background(...)` on the root ZStack (NOT as a ZStack child — see Gotcha). `.ignoresSafeArea()` extends the paint to screen edges without pushing the ZStack's layout frame past safe area.
   - **Top widgets** (each in its own overlay): `QuarterCircleShape` backdrop (130pt) anchored top-left with the X button inside (`.padding(.top, 60, .leading, 12)`); paper-bg picker placeholder (32pt circle, FCFCFC stroke, currently non-interactive) anchored top-right at the same y. Both overlays use `.ignoresSafeArea(edges: .top)` so they sit at the literal screen top regardless of safe area, and `.ignoresSafeArea(.keyboard)` so SwiftUI's auto-keyboard-avoidance doesn't push them off the top of the screen when the keyboard rises.
-  - **Body:** `BulletTextView` (UITextView bridge) filling the area between top widgets and footer, with `.padding(.top, 80)` and `.padding(.bottom, footerHeight + footerTopCurve)`. Special Elite 24pt, 40pt horizontal text-container insets. Placeholder `tell me my love` is a SwiftUI Text overlay with `.allowsHitTesting(false)` shown when `text.isEmpty && !isFocused`.
+  - **Body:** `BulletTextView` (UITextView bridge) filling the area between top widgets and the dome footer. `.padding(.top, 80)`, NO bottom padding — the UITextView's frame extends all the way to the safe-area bottom and the dome sits on top of it so text visually scrolls *under* the save button (clipped behind it). Special Elite **18pt**, 40pt horizontal text-container insets. `bottomClearance` is passed as `footerHeight + footerTopCurve + 8` (≈96pt) in non-branch modes so the user can scroll the last line above the dome; in `.branch` mode it's the default 24 because there's no dome. Placeholder `tell me my love` is a SwiftUI Text overlay with `.allowsHitTesting(false)` shown when `text.isEmpty && !isFocused`.
   - **Footer:** same `HalfMoonCTA` dome as media; positioned as a direct ZStack child anchored `.bottom` (NOT `safeAreaInset` — see Gotcha). Label `"publish"` for create, `"save"` for edit. No-op when text trimmed empty. Footer stays pinned at safe-area bottom even when keyboard rises (keyboard simply covers it; user dismisses keyboard first to tap publish).
-  - **Cancel:** if text is empty, X exits immediately. If text exists, X shows the same `"are you sure?"` prompt as media flow.
+  - **Top-left X (`.create` / `.edit` only):** if text is empty, X exits immediately. If text exists, X shows the same `"are you sure?"` prompt as media flow. In `.branch` mode, X is replaced by a chevron-left that auto-commits via `onCommit(text)` — no confirm.
+  - **Top-right (`.edit` only):** trash icon to the left of the paper-picker circle (`HStack { trash; paperPickerPlaceholder }`). Tap shows `"delete this piece?"` confirm; on confirm, FeedView calls `modelContext.delete(piece); try? modelContext.save()` and dismisses the editor. Hidden in `.create` and `.branch`.
   - **Persistence in `FeedView`:**
     - `publishingText: PublishingText` payload carries `content` + optional `editingPieceID`.
     - `persistText(payload:)` — for create: insert a standalone `Piece(type: .text, textContent:, sortOrder: min(collection.sortOrder, standalonePiece.sortOrder) - 1)` then `viewMode = .file`. For edit: fetch the Piece by ID and update `textContent`.
+    - **Delete standalone text piece** (edit mode trash → confirm → `onDelete`): `modelContext.delete(piece); try? modelContext.save()`, then dismiss the editor. No JPEG cleanup needed because text pieces don't have an `imageFileName`.
     - Auto-switches to File view after create so the new text card is visible (standalone text pieces don't show in Minimalist mode, which is collection-only).
 - `BulletTextView` ([Views/Create/BulletTextView.swift](hallways/Views/Create/BulletTextView.swift)) — `UIViewRepresentable` wrapping `UITextView`:
   - Bullet rules implemented in `textView(_:shouldChangeTextIn:replacementText:)`: `- ` at start of line → `• `; Enter on bulleted line → continues with `\n• `; Enter on empty `• ` line → strips the bullet; backspace inside empty `• ` line → strips the whole `• `.
   - `tv.smartDashesType = .no` so iOS doesn't convert `--` to em-dash before our rule fires.
   - `keyboardDismissMode = .interactive` so users can swipe the keyboard down.
-  - Internal keyboard observer in the Coordinator sets `contentInset.bottom = overlap + 40` so the cursor stays ≥40pt above the keyboard.
+  - **`bottomClearance: CGFloat` parameter** (default 24) — when the UITextView's frame extends down past where a dome footer sits (so text scrolls visually *behind* the dome), the keyboard observer uses `bottomClearance` as `baseBottom`. With clearance = `footerHeight + footerTopCurve + 8 ≈ 96`, the user can scroll the last line up to ~96pt above the bottom — i.e., above the dome. WritingEditorView passes 96 in `.create`/`.edit`, 24 in `.branch` (no dome there). Applied to `contentInset.bottom` in `makeUIView` and re-applied in `updateUIView` if the value changes mid-session.
+  - Internal keyboard observer in the Coordinator sets `contentInset.bottom = overlap + 40` while keyboard is up (cursor ≥40pt above keyboard), and back to `bottomClearance` on keyboard hide.
   - **Dismiss-on-empty-tap recognizer:** custom `UITapGestureRecognizer` added to the UITextView with a delegate that gates `shouldReceive(touch:)` on **(a)** `textView.isFirstResponder` (so tapping an unfocused empty text view reliably focuses it instead of racing UITextView's built-in focus tap), and **(b)** the touch landing outside the rendered text bounds (`layoutManager.usedRect(for: textContainer)` + `textContainerInset`, with a 20pt "right next to" padding). When the gate passes, the handler calls `resignFirstResponder`. Net behavior: tap on / near text → cursor moves (UITextView default); tap anywhere else in the text view's frame → dismiss.
 - `QuarterCircleShape` ([Views/Create/QuarterCircleShape.swift](hallways/Views/Create/QuarterCircleShape.swift)) — tiny `Shape` drawing a pie slice anchored at the top-left corner.
 - `green-paper-bg.imageset` in `Assets.xcassets` — single universal scale; source PNG in `~/Downloads/green paper bg.png` (also tracked under design assets if needed).
@@ -191,7 +195,7 @@ hallways/
   ContentView.swift                       - Splash fade gate → FeedView
   Models/
     Piece.swift                           - @Model: text/media, imageFileName, sortOrder, inverse to Collection
-    Collection.swift                      - @Model: title, pieces (cascade), lastEditedAt, sortOrder, orderedPieces
+    Collection.swift                      - @Model: title, pieces (cascade), lastEditedAt, sortOrder, orderedPieces, mediaPieces, textPiece, isCombined
   Theme/
     HallwaysTheme.swift                   - Colors, layout constants, Font.specialElite/printvetica, Color(hex:)
   Utilities/
@@ -199,7 +203,8 @@ hallways/
   Views/
     FeedView.swift                        - NavigationStack root; bottom bar (plus + toggle); all create-flow overlays; publishCollection persists
     MinimalistView.swift                  - Vertical scroll of collections (collection rows only)
-    MinimalistExpandedView.swift          - Per-collection scroll list with hero tap-to-view, date stamp, three-dots → editor, edge-swipe-back, ScrollViewReader for hero alignment, toolbar hide
+    MinimalistExpandedView.swift          - Per-collection scroll list for media-only; top-trailing title+date header w/ chevron-left back arrow; pull-down half-moon edit CTA (replaces old three-dots); hero tap-to-view; ScrollViewReader for hero alignment; toolbar hidden
+    CombinedExpandedView.swift            - Split layout for combined (media+text) collections: 40/60 horizontal mediaRow + parchment textRegion, top-trailing title+date header w/ chevron-left back arrow; pull-down half-moon edit CTA; mounts CollectionEditOverviewView as ZStack overlay
     ImageViewerView.swift                 - TabView paging viewer; matchedGeometry on current page only; vertical drag-down dismiss; pinch zoom
     FileView.swift                        - 2-column grid: standalones + collection stacks
     FileExpandedView.swift                - Blurred overlay with piece grid + title + date
@@ -210,10 +215,11 @@ hallways/
       CollectionStackView.swift           - Mini 3-card stack preview for file grid
       ViewModeToggle.swift                - Animated toggle
     Create/
-      CreateOverlay.swift                 - White blur overlay; upload-media + writing CTAs (Printvetica); chevron-down dismiss
-      CreateEditView.swift                - Media editor (create + edit modes); custom drag via CardLongPressGesture; Instagram-style reorder; delete zone; PhotoDraft struct; EditorMode enum
-      WritingEditorView.swift             - Text editor (create + edit modes); green-paper bg; quarter-circle X; paper-picker placeholder; publish/save footer; cancel confirm; Mode enum (.create / .edit(Piece))
-      BulletTextView.swift                - UITextView bridge: bullet rules, keyboard inset tracking, custom empty-area tap recognizer
+      CreateOverlay.swift                 - White blur overlay; upload-media + writing CTAs (Printvetica); chevron-down dismiss. Reused as the carousel-end chooser inside CreateEditView
+      CreateEditView.swift                - Media editor; EditorMode (.create / .edit(Collection) / .branch(initialDrafts:, onCommit:)); custom drag via CardLongPressGesture; Instagram-style reorder; delete zone; carousel-end chooser opens writing sub-editor; draftText state attaches text piece on publish; PhotoDraft struct
+      WritingEditorView.swift             - Text editor; Mode (.create / .edit(Piece) / .branch(initialText:, onCommit:)); green-paper bg; quarter-circle X (or chevron-left in branch); paper-picker placeholder w/ trash icon in edit mode; 18pt body; publish/save footer (hidden in branch); cancel + delete confirms
+      CollectionEditOverviewView.swift    - Edit overview for combined collections; X top-left + edit media / edit text tiles + save dome via safeAreaInset; owns in-memory drafts/textContent; branches into CreateEditView(.branch) / WritingEditorView(.branch); on save fires PublishCurtainView and applyChanges() commits to SwiftData
+      BulletTextView.swift                - UITextView bridge: bullet rules, bottomClearance parameter (lets text scroll behind the publish dome), keyboard inset tracking, custom empty-area tap recognizer
       QuarterCircleShape.swift            - Pie slice anchored top-left, used behind the writing-editor X button
       HalfMoonCTA.swift        - Shape with topCurveHeight + bottomCurveHeight; control points outside rect for outward bulges; AnimatablePair
       PublishCurtainView.swift            - Rise / hold / exit-up animation; parameterized label ("publish" / "save" / "update")
