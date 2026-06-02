@@ -30,7 +30,7 @@ struct PublishCurtainView: View {
                 Color.clear
 
                 ZStack(alignment: .top) {
-                    PublishSemicircleShape(
+                    HalfMoonCTA(
                         topCurveHeight: topCurve,
                         bottomCurveHeight: bottomCurve
                     )

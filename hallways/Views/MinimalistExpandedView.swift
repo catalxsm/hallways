@@ -17,11 +17,21 @@ struct MinimalistExpandedView: View {
     @State private var showEditor: Bool = false
     @State private var updatePayload: UpdatePayload? = nil
 
+    // Pull-down edit CTA reveal state.
+    @State private var editRevealProgress: CGFloat = 0
+
+    private let editCTAHeight: CGFloat = 100
+    private let editCTABottomCurve: CGFloat = 72
+    private let revealThreshold: CGFloat = 60
+
     private struct UpdatePayload: Equatable {
         let title: String
         let drafts: [PhotoDraft]
+        let textContent: String?
         static func == (lhs: UpdatePayload, rhs: UpdatePayload) -> Bool {
-            lhs.title == rhs.title && lhs.drafts.map(\.id) == rhs.drafts.map(\.id)
+            lhs.title == rhs.title
+                && lhs.drafts.map(\.id) == rhs.drafts.map(\.id)
+                && lhs.textContent == rhs.textContent
         }
     }
 
@@ -58,15 +68,9 @@ struct MinimalistExpandedView: View {
                                 }
                             }
 
-                            Text(formattedLastEdited)
-                                .font(.printvetica(size: 14))
-                                .foregroundColor(Color(hex: "9F9F9F"))
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                // 24 from LazyVStack spacing + 8 padding = 32pt from last photo.
-                                .padding(.top, 8)
-                                .padding(.bottom, 16)
                         }
-                        .padding(.vertical, 16)
+                        .padding(.top, 80) // Room for the top-trailing header.
+                        .padding(.bottom, 16)
                         .padding(.horizontal, horizontalPadding)
                     }
                     .onChange(of: selectedPiece?.id) { _, newID in
@@ -130,8 +134,12 @@ struct MinimalistExpandedView: View {
                             showEditor = false
                         }
                     },
-                    onSave: { title, drafts in
-                        updatePayload = UpdatePayload(title: title, drafts: drafts)
+                    onSave: { title, drafts, textContent in
+                        updatePayload = UpdatePayload(
+                            title: title,
+                            drafts: drafts,
+                            textContent: textContent
+                        )
                     },
                     onDelete: {
                         deleteCollection()
@@ -145,7 +153,11 @@ struct MinimalistExpandedView: View {
                 PublishCurtainView(
                     label: "update",
                     onRiseComplete: {
-                        applyUpdate(title: payload.title, drafts: payload.drafts)
+                        applyUpdate(
+                            title: payload.title,
+                            drafts: payload.drafts,
+                            textContent: payload.textContent
+                        )
                         showEditor = false
                     },
                     onComplete: {
@@ -156,49 +168,125 @@ struct MinimalistExpandedView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { /* swallow */ }
             }
-        }
-        .navigationTitle(collection.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(chromeVisibility, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(collection.title)
-                    .font(.specialElite(size: 18))
-                    .foregroundColor(HallwaysTheme.text)
-            }
-        }
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
+
+            // Top header row — back arrow on left + title/date on right.
+            // Matches CombinedExpandedView's header.
+            HStack(alignment: .center) {
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.system(size: 18, weight: .medium))
                         .foregroundColor(HallwaysTheme.text)
                         .frame(width: 44, height: 44, alignment: .leading)
                         .contentShape(Rectangle())
                 }
-            }
 
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        showEditor = true
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 18, weight: .medium))
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(collection.title.isEmpty ? "[untitled collection]" : collection.title)
+                        .font(.specialElite(size: 16))
                         .foregroundColor(HallwaysTheme.text)
-                        .frame(width: 44, height: 44, alignment: .trailing)
-                        .contentShape(Rectangle())
+                        .lineLimit(1)
+                    Text(collection.lastEditedAt.hallwaysStamp)
+                        .font(.printvetica(size: 12))
+                        .foregroundColor(Color(hex: "9F9F9F"))
                 }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .opacity(selectedPiece == nil && !showEditor ? 1 : 0)
+            .zIndex(40)
+
+            // Pull-down drag strip — covers the top area except the left 60pt
+            // where the back-arrow tap zone lives. Touches in the back-arrow
+            // zone pass through; drags elsewhere reveal the edit CTA.
+            HStack(spacing: 0) {
+                Color.clear.frame(width: 60) // back-arrow tap zone
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .highPriorityGesture(revealDragGesture)
+            }
+            .frame(height: 120)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(selectedPiece == nil && !showEditor)
+            .zIndex(45)
+
+            editCTA
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(editRevealProgress > 0.01)
+                .zIndex(60)
+
+            if editRevealProgress > 0.01 && !showEditor {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            editRevealProgress = 0
+                        }
+                    }
+                    .zIndex(55)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
+    }
+
+    // MARK: - Edit CTA + reveal gesture
+
+    private var editCTA: some View {
+        let domeTotal = editCTAHeight + editCTABottomCurve
+        // +100 buffer guarantees the curve's bottom edge clears the safe-area
+        // boundary even on tall-status-bar devices — prevents a sliver peeking
+        // at rest. Mirrors the formula in CombinedExpandedView.
+        let hiddenOffset: CGFloat = -(domeTotal + 100)
+        let translateY: CGFloat = hiddenOffset * (1 - editRevealProgress)
+        return ZStack(alignment: .top) {
+            HalfMoonCTA(
+                topCurveHeight: 0,
+                bottomCurveHeight: editCTABottomCurve
+            )
+            .fill(HallwaysTheme.text)
+            .frame(height: editCTAHeight)
+            .ignoresSafeArea(edges: .top)
+
+            Text("edit")
+                .font(.specialElite(size: 16))
+                .foregroundColor(.white)
+                .padding(.top, 40)
+        }
+        .frame(height: editCTAHeight)
+        .offset(y: translateY)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                editRevealProgress = 0
+                showEditor = true
             }
         }
     }
 
-    private var chromeVisibility: Visibility {
-        (selectedPiece != nil || showEditor) ? .hidden : .visible
+    private var revealDragGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                let dy = max(0, value.translation.height)
+                editRevealProgress = min(1, dy / (revealThreshold * 2))
+            }
+            .onEnded { value in
+                if value.translation.height > revealThreshold {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        editRevealProgress = 1
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        editRevealProgress = 0
+                    }
+                }
+            }
     }
 
     // Keeps lastInteractedID in sync with whatever piece the viewer is showing
@@ -213,27 +301,6 @@ struct MinimalistExpandedView: View {
                 }
             }
         )
-    }
-
-    private var formattedLastEdited: String {
-        let date = collection.lastEditedAt
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dateFormatter.dateFormat = "yyyy.MM.dd"
-
-        let weekdayFormatter = DateFormatter()
-        weekdayFormatter.locale = Locale(identifier: "en_US_POSIX")
-        weekdayFormatter.dateFormat = "EEE"
-
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
-        timeFormatter.dateFormat = "HH:mm"
-
-        let dateStr = dateFormatter.string(from: date)
-        let weekday = weekdayFormatter.string(from: date).uppercased()
-        let timeStr = timeFormatter.string(from: date)
-
-        return "\(dateStr)   |   \(weekday) \(timeStr)"
     }
 
     private func width(for piece: Piece, contentWidth: CGFloat) -> CGFloat {
@@ -251,13 +318,13 @@ struct MinimalistExpandedView: View {
 
     // MARK: - Persistence
 
-    private func applyUpdate(title: String, drafts: [PhotoDraft]) {
-        let keptIDs = Set(drafts.compactMap(\.existingPieceID))
+    private func applyUpdate(title: String, drafts: [PhotoDraft], textContent: String?) {
+        let keptMediaIDs = Set(drafts.compactMap(\.existingPieceID))
         let existingByID = Dictionary(uniqueKeysWithValues: collection.pieces.map { ($0.id, $0) })
 
-        // Remove pieces no longer present in drafts.
-        for piece in collection.pieces where !keptIDs.contains(piece.id) {
-            if let fn = piece.imageFileName, piece.type == .media {
+        // Remove media pieces no longer present in drafts.
+        for piece in collection.pieces where piece.type == .media && !keptMediaIDs.contains(piece.id) {
+            if let fn = piece.imageFileName {
                 ImageStorage.deleteImage(named: fn)
             }
             modelContext.delete(piece)
@@ -276,6 +343,24 @@ struct MinimalistExpandedView: View {
                 )
                 collection.pieces.append(piece)
             }
+        }
+
+        // Upsert / delete the attached text piece based on the incoming content.
+        let trimmed = textContent?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            if let existing = collection.textPiece {
+                existing.textContent = trimmed
+                existing.sortOrder = drafts.count
+            } else {
+                let textPiece = Piece(
+                    type: .text,
+                    textContent: trimmed,
+                    sortOrder: drafts.count
+                )
+                collection.pieces.append(textPiece)
+            }
+        } else if let existing = collection.textPiece {
+            modelContext.delete(existing)
         }
 
         collection.title = title

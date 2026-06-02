@@ -26,14 +26,33 @@ struct PhotoDraft: Identifiable, Equatable {
 enum EditorMode {
     case create
     case edit(Collection)
+    // Sub-screen used by the combined-collection edit overview.
+    // No publish/update footer (the dome is permanently the red "delete"
+    // drop zone). Back arrow commits drafts to the parent overview.
+    case branch(initialDrafts: [PhotoDraft], onCommit: ([PhotoDraft]) -> Void)
 
     var isEdit: Bool {
         if case .edit = self { return true }
         return false
     }
 
+    var isBranch: Bool {
+        if case .branch = self { return true }
+        return false
+    }
+
     var existingCollection: Collection? {
         if case .edit(let c) = self { return c }
+        return nil
+    }
+
+    var initialBranchDrafts: [PhotoDraft]? {
+        if case .branch(let initial, _) = self { return initial }
+        return nil
+    }
+
+    var branchCommit: (([PhotoDraft]) -> Void)? {
+        if case .branch(_, let commit) = self { return commit }
         return nil
     }
 
@@ -64,7 +83,10 @@ struct CreateEditView: View {
     let mode: EditorMode
     let initialPhotos: [UIImage]
     var onCancel: () -> Void
-    var onSave: (_ title: String, _ drafts: [PhotoDraft]) -> Void
+    // textContent is the writing attached to this collection (nil if none).
+    // Set in .create mode by the carousel-end "writing" chooser, or loaded
+    // from collection.textPiece in .edit mode.
+    var onSave: (_ title: String, _ drafts: [PhotoDraft], _ textContent: String?) -> Void
     var onDelete: (() -> Void)? = nil
 
     @State private var drafts: [PhotoDraft] = []
@@ -73,6 +95,9 @@ struct CreateEditView: View {
     @State private var showDeleteConfirm: Bool = false
     @State private var morePickerItems: [PhotosPickerItem] = []
     @State private var showMorePicker: Bool = false
+    @State private var showCarouselEndChooser: Bool = false
+    @State private var showWritingSubEditor: Bool = false
+    @State private var draftText: String? = nil
     @State private var didSave: Bool = false
 
     // Custom drag state.
@@ -138,6 +163,57 @@ struct CreateEditView: View {
                     )
                     .transition(.opacity)
                     .zIndex(300)
+                }
+
+                if showCarouselEndChooser {
+                    CreateOverlay(
+                        onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showCarouselEndChooser = false
+                            }
+                        },
+                        onUploadMedia: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showCarouselEndChooser = false
+                            }
+                            morePickerItems = []
+                            // Defer to let the chooser dismiss animation start
+                            // before the PhotosPicker presents.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                showMorePicker = true
+                            }
+                        },
+                        onWriting: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showCarouselEndChooser = false
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                showWritingSubEditor = true
+                            }
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(310)
+                }
+
+                if showWritingSubEditor {
+                    WritingEditorView(
+                        mode: .branch(
+                            initialText: draftText ?? "",
+                            onCommit: { content in
+                                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                                draftText = trimmed.isEmpty ? nil : trimmed
+                            }
+                        ),
+                        onCancel: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                showWritingSubEditor = false
+                            }
+                        },
+                        onSave: { _ in }
+                    )
+                    .transition(.opacity)
+                    .zIndex(320)
                 }
             }
             .coordinateSpace(name: editorSpace)
@@ -206,20 +282,29 @@ struct CreateEditView: View {
     private var topBar: some View {
         HStack(alignment: .center, spacing: 12) {
             Button {
-                showCancelConfirm = true
+                if mode.isBranch {
+                    mode.branchCommit?(drafts)
+                    onCancel()
+                } else {
+                    showCancelConfirm = true
+                }
             } label: {
-                Image(systemName: "xmark")
+                Image(systemName: mode.isBranch ? "chevron.left" : "xmark")
                     .font(.system(size: 20, weight: .medium))
                     .foregroundColor(HallwaysTheme.text)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
 
-            TextField(titlePlaceholder, text: $title)
-                .font(.specialElite(size: 18))
-                .foregroundColor(HallwaysTheme.text)
-                .multilineTextAlignment(.center)
-                .submitLabel(.done)
+            if mode.isBranch {
+                Spacer()
+            } else {
+                TextField(titlePlaceholder, text: $title)
+                    .font(.specialElite(size: 18))
+                    .foregroundColor(HallwaysTheme.text)
+                    .multilineTextAlignment(.center)
+                    .submitLabel(.done)
+            }
 
             if mode.isEdit {
                 Button {
@@ -441,6 +526,12 @@ struct CreateEditView: View {
                     existingFilename: filename
                 )
             }
+            if let existing = collection.textPiece?.textContent,
+               !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                draftText = existing
+            }
+        case .branch(let initial, _):
+            drafts = initial
         }
     }
 
@@ -475,8 +566,17 @@ struct CreateEditView: View {
 
     private var addMoreButton: some View {
         Button {
-            morePickerItems = []
-            showMorePicker = true
+            // In branch mode, no chooser — branch only edits existing drafts.
+            // Otherwise show the media/writing chooser; the user picks one or
+            // the other for this add action.
+            if mode.isBranch {
+                morePickerItems = []
+                showMorePicker = true
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showCarouselEndChooser = true
+                }
+            }
         } label: {
             ZStack {
                 Circle()
@@ -494,10 +594,12 @@ struct CreateEditView: View {
 
     private var publishFooter: some View {
         let isDragging = draggingID != nil
-        let fillColor: Color = isDragging
+        let isBranch = mode.isBranch
+        let showsDelete = isDragging || isBranch
+        let fillColor: Color = showsDelete
             ? (isOverDeleteZone ? deleteActiveColor : deleteColor)
             : HallwaysTheme.text
-        let label = isDragging ? "delete" : mode.footerLabel
+        let label = showsDelete ? "delete" : mode.footerLabel
         let scale: CGFloat = isOverDeleteZone ? 1.6 : 1.0
 
         return ZStack(alignment: .top) {
@@ -505,7 +607,7 @@ struct CreateEditView: View {
                 fillColor
                     .ignoresSafeArea(edges: .bottom)
 
-                PublishSemicircleShape(
+                HalfMoonCTA(
                     topCurveHeight: footerTopCurve,
                     bottomCurveHeight: 0
                 )
@@ -524,6 +626,9 @@ struct CreateEditView: View {
         .animation(.easeOut(duration: 0.22), value: isOverDeleteZone)
         .contentShape(Rectangle())
         .onTapGesture {
+            // In branch mode the dome is the delete drop zone, not a publish
+            // button — tapping does nothing here.
+            guard !mode.isBranch else { return }
             guard !drafts.isEmpty, !didSave, draggingID == nil else { return }
             didSave = true
             UIApplication.shared.sendAction(
@@ -531,7 +636,7 @@ struct CreateEditView: View {
                 to: nil, from: nil, for: nil
             )
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                onSave(displayTitle, drafts)
+                onSave(displayTitle, drafts, draftText)
             }
         }
     }

@@ -11,10 +11,14 @@ struct BulletTextView: UIViewRepresentable {
     var textColor: UIColor
     var tintColor: UIColor
     var textInsets: UIEdgeInsets = UIEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
+    // Bottom scroll inset when keyboard is down. Lets callers reserve room so
+    // the last line can be scrolled past content stacked on top of the text
+    // view (e.g. the writing editor's publish dome).
+    var bottomClearance: CGFloat = 24
     var autoFocus: Bool = false
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, isFocused: $isFocused)
+        Coordinator(text: $text, isFocused: $isFocused, bottomClearance: bottomClearance)
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -33,6 +37,8 @@ struct BulletTextView: UIViewRepresentable {
         // rule has a chance to fire.
         tv.smartDashesType = .no
         tv.text = text
+        tv.contentInset.bottom = bottomClearance
+        tv.verticalScrollIndicatorInsets.bottom = bottomClearance
         context.coordinator.attach(to: tv)
 
         // Tap inside the text view, but outside the rendered text (with a small
@@ -65,6 +71,13 @@ struct BulletTextView: UIViewRepresentable {
         if uiView.textContainerInset != textInsets {
             uiView.textContainerInset = textInsets
         }
+        if context.coordinator.bottomClearance != bottomClearance {
+            context.coordinator.bottomClearance = bottomClearance
+            if uiView.contentInset.bottom != bottomClearance {
+                uiView.contentInset.bottom = bottomClearance
+                uiView.verticalScrollIndicatorInsets.bottom = bottomClearance
+            }
+        }
     }
 
     static func dismantleUIView(_ uiView: UITextView, coordinator: Coordinator) {
@@ -74,15 +87,17 @@ struct BulletTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var text: Binding<String>
         var isFocused: Binding<Bool>
+        var bottomClearance: CGFloat
         weak var emptyAreaTap: UITapGestureRecognizer?
         private weak var textView: UITextView?
         private var observers: [NSObjectProtocol] = []
         // Tap is "right next to" text within this many points.
         private let textHitPadding: CGFloat = 20
 
-        init(text: Binding<String>, isFocused: Binding<Bool>) {
+        init(text: Binding<String>, isFocused: Binding<Bool>, bottomClearance: CGFloat) {
             self.text = text
             self.isFocused = isFocused
+            self.bottomClearance = bottomClearance
         }
 
         func attach(to textView: UITextView) {
@@ -113,7 +128,7 @@ struct BulletTextView: UIViewRepresentable {
 
         private func handleKeyboard(note: Notification, hiding: Bool) {
             guard let tv = textView, tv.window != nil else { return }
-            let baseBottom: CGFloat = 24
+            let baseBottom: CGFloat = bottomClearance
             if hiding {
                 tv.contentInset.bottom = baseBottom
                 tv.verticalScrollIndicatorInsets.bottom = baseBottom

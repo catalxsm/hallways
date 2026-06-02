@@ -37,6 +37,33 @@ extension Font {
     }
 }
 
+// MARK: - Date Stamp
+
+extension Date {
+    // The format used everywhere we render a collection's date stamp.
+    // Locale is pinned to en_US_POSIX so day-name capitalization and 24h
+    // time are stable across user locales.
+    var hallwaysStamp: String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.dateFormat = "yyyy.MM.dd"
+
+        let weekdayFormatter = DateFormatter()
+        weekdayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        weekdayFormatter.dateFormat = "EEE"
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.dateFormat = "HH:mm"
+
+        let dateStr = dateFormatter.string(from: self)
+        let weekday = weekdayFormatter.string(from: self).uppercased()
+        let timeStr = timeFormatter.string(from: self)
+
+        return "\(dateStr)   |   \(weekday) \(timeStr)"
+    }
+}
+
 // MARK: - Color Hex Initializer
 
 extension Color {

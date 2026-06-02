@@ -1,12 +1,13 @@
 import SwiftUI
 
-// A rectangle whose top and bottom edges can each be an inward-curving arc.
-// topCurveHeight controls how much the top edge bulges DOWN into the shape;
-// bottomCurveHeight controls how much the bottom edge bulges UP into the shape.
+// A rectangle whose top and bottom edges can each be an outward-bulging arc.
+// topCurveHeight bulges the top edge UP above the rect; bottomCurveHeight
+// bulges the bottom edge DOWN below it. Both halves animate via AnimatablePair.
 //
-// publish footer state:  topCurveHeight > 0, bottomCurveHeight = 0   (curve facing up)
-// publish exit state:    topCurveHeight = 0, bottomCurveHeight > 0   (flipped, curve facing down)
-struct PublishSemicircleShape: Shape {
+// bottom dome (publish/save footer): topCurveHeight > 0, bottomCurveHeight = 0
+// top dome (edit CTA pulled down):   topCurveHeight = 0, bottomCurveHeight > 0
+// publish exit curtain:              topCurveHeight = 0, bottomCurveHeight > 0
+struct HalfMoonCTA: Shape {
     var topCurveHeight: CGFloat
     var bottomCurveHeight: CGFloat
 

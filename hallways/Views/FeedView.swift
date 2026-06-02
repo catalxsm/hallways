@@ -31,6 +31,7 @@ struct FeedView: View {
     private struct PublishingPayload: Equatable {
         let title: String
         let images: [UIImage]
+        let textContent: String?
     }
 
     private struct PublishingText: Equatable {
@@ -140,10 +141,11 @@ struct FeedView: View {
                                 editingPhotos = nil
                             }
                         },
-                        onSave: { title, drafts in
+                        onSave: { title, drafts, textContent in
                             publishingPayload = PublishingPayload(
                                 title: title,
-                                images: drafts.map { $0.image }
+                                images: drafts.map { $0.image },
+                                textContent: textContent
                             )
                         }
                     )
@@ -185,6 +187,13 @@ struct FeedView: View {
                                 content: content,
                                 editingPieceID: piece.id
                             )
+                        },
+                        onDelete: {
+                            modelContext.delete(piece)
+                            try? modelContext.save()
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                editingTextPiece = nil
+                            }
                         }
                     )
                     .transition(.opacity)
@@ -195,7 +204,11 @@ struct FeedView: View {
                 if let payload = publishingPayload {
                     PublishCurtainView(
                         onRiseComplete: {
-                            publish(title: payload.title, images: payload.images)
+                            publish(
+                                title: payload.title,
+                                images: payload.images,
+                                textContent: payload.textContent
+                            )
                             editingPhotos = nil
                         },
                         onComplete: {
@@ -225,7 +238,11 @@ struct FeedView: View {
                 }
             }
             .navigationDestination(for: Collection.self) { collection in
-                MinimalistExpandedView(collection: collection)
+                if collection.isCombined {
+                    CombinedExpandedView(collection: collection)
+                } else {
+                    MinimalistExpandedView(collection: collection)
+                }
             }
         }
         .photosPicker(
@@ -285,7 +302,7 @@ struct FeedView: View {
         viewMode = .file
     }
 
-    private func publish(title: String, images: [UIImage]) {
+    private func publish(title: String, images: [UIImage], textContent: String?) {
         var pieces: [Piece] = []
         for (index, image) in images.enumerated() {
             guard let filename = try? ImageStorage.saveJPEG(image) else { continue }
@@ -295,6 +312,15 @@ struct FeedView: View {
                 sortOrder: index
             )
             pieces.append(piece)
+        }
+        if let trimmed = textContent?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !trimmed.isEmpty {
+            let textPiece = Piece(
+                type: .text,
+                textContent: trimmed,
+                sortOrder: pieces.count
+            )
+            pieces.append(textPiece)
         }
         let minSort = collections.map(\.sortOrder).min() ?? 0
         let collection = Collection(

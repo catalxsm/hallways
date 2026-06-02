@@ -14,6 +14,18 @@ final class Collection {
         pieces.sorted { $0.sortOrder < $1.sortOrder }
     }
 
+    var mediaPieces: [Piece] {
+        orderedPieces.filter { $0.type == .media }
+    }
+
+    var textPiece: Piece? {
+        orderedPieces.first { $0.type == .text }
+    }
+
+    var isCombined: Bool {
+        !mediaPieces.isEmpty && textPiece != nil
+    }
+
     init(
         title: String,
         pieces: [Piece] = [],

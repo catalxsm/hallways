@@ -6,10 +6,29 @@ struct WritingEditorView: View {
     enum Mode {
         case create
         case edit(Piece)
+        // Sub-screen used by the combined-collection edit overview.
+        // No own save button — back arrow auto-commits the current text
+        // via onCommit. Persistence happens on the overview.
+        case branch(initialText: String, onCommit: (String) -> Void)
 
         var existingPiece: Piece? {
             if case .edit(let p) = self { return p }
             return nil
+        }
+
+        var initialBranchText: String? {
+            if case .branch(let initial, _) = self { return initial }
+            return nil
+        }
+
+        var branchCommit: ((String) -> Void)? {
+            if case .branch(_, let commit) = self { return commit }
+            return nil
+        }
+
+        var isBranch: Bool {
+            if case .branch = self { return true }
+            return false
         }
 
         var footerLabel: String {
@@ -21,17 +40,19 @@ struct WritingEditorView: View {
     let mode: Mode
     var onCancel: () -> Void
     var onSave: (_ content: String) -> Void
+    var onDelete: (() -> Void)? = nil
 
     @State private var text: String = ""
     @State private var isFocused: Bool = false
     @State private var showCancelConfirm: Bool = false
+    @State private var showDeleteConfirm: Bool = false
     @State private var didSave: Bool = false
     @State private var didLoadInitial: Bool = false
 
     private let footerHeight: CGFloat = 40
     private let footerTopCurve: CGFloat = 48
     private let placeholder: String = "tell me my love"
-    private let bodyFontSize: CGFloat = 24
+    private let bodyFontSize: CGFloat = 18
     private let horizontalTextInset: CGFloat = 40
 
     private var bodyFont: UIFont {
@@ -63,6 +84,7 @@ struct WritingEditorView: View {
                     bottom: 24,
                     right: horizontalTextInset
                 ),
+                bottomClearance: mode.isBranch ? 24 : footerHeight + footerTopCurve + 8,
                 autoFocus: false
             )
             .overlay(alignment: .topLeading) {
@@ -76,14 +98,51 @@ struct WritingEditorView: View {
                 }
             }
             .padding(.top, 80)
-            .padding(.bottom, footerHeight + footerTopCurve)
 
-            publishFooter
+            if !mode.isBranch {
+                publishFooter
+            }
 
             if showCancelConfirm {
-                cancelConfirm
-                    .transition(.opacity)
-                    .zIndex(300)
+                confirmPrompt(
+                    message: "are you sure?",
+                    yesLabel: "yes",
+                    noLabel: "no",
+                    onYes: {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showCancelConfirm = false
+                        }
+                        onCancel()
+                    },
+                    onNo: {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showCancelConfirm = false
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(300)
+            }
+
+            if showDeleteConfirm {
+                confirmPrompt(
+                    message: "delete this piece?",
+                    yesLabel: "delete",
+                    noLabel: "cancel",
+                    onYes: {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showDeleteConfirm = false
+                        }
+                        onDelete?()
+                    },
+                    onNo: {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showDeleteConfirm = false
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(300)
             }
         }
         // Bg goes via .background, not as a ZStack child. .ignoresSafeArea
@@ -103,10 +162,28 @@ struct WritingEditorView: View {
                 .ignoresSafeArea(edges: [.top, .leading])
         }
         .overlay(alignment: .topTrailing) {
-            paperPickerPlaceholder
-                .padding(.top, 60)
-                .padding(.trailing, 20)
-                .ignoresSafeArea(edges: .top)
+            HStack(spacing: 12) {
+                if case .edit = mode {
+                    Button {
+                        dismissKeyboard()
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showDeleteConfirm = true
+                        }
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 20, weight: .regular))
+                            .foregroundColor(HallwaysTheme.text)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                }
+                paperPickerPlaceholder
+            }
+            .padding(.top, 60)
+            .padding(.trailing, 20)
+            .ignoresSafeArea(edges: .top)
+            .opacity(mode.isBranch ? 0 : 1)
+            .allowsHitTesting(!mode.isBranch)
         }
         .onAppear { loadInitialState() }
     }
@@ -128,7 +205,11 @@ struct WritingEditorView: View {
                 .allowsHitTesting(false)
 
             Button {
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if mode.isBranch {
+                    dismissKeyboard()
+                    mode.branchCommit?(text)
+                    onCancel()
+                } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     onCancel()
                 } else {
                     dismissKeyboard()
@@ -137,7 +218,7 @@ struct WritingEditorView: View {
                     }
                 }
             } label: {
-                Image(systemName: "xmark")
+                Image(systemName: mode.isBranch ? "chevron.left" : "xmark")
                     .font(.system(size: 18, weight: .medium))
                     .foregroundColor(HallwaysTheme.text)
                     .frame(width: 44, height: 44)
@@ -166,7 +247,7 @@ struct WritingEditorView: View {
             ZStack(alignment: .top) {
                 HallwaysTheme.text
                     .ignoresSafeArea(edges: .bottom)
-                PublishSemicircleShape(
+                HalfMoonCTA(
                     topCurveHeight: footerTopCurve,
                     bottomCurveHeight: 0
                 )
@@ -194,20 +275,22 @@ struct WritingEditorView: View {
         }
     }
 
-    // MARK: - Cancel confirm
+    // MARK: - Confirm prompt
 
-    private var cancelConfirm: some View {
+    private func confirmPrompt(
+        message: String,
+        yesLabel: String,
+        noLabel: String,
+        onYes: @escaping () -> Void,
+        onNo: @escaping () -> Void
+    ) -> some View {
         ZStack {
             Color.black.opacity(0.35)
                 .ignoresSafeArea()
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        showCancelConfirm = false
-                    }
-                }
+                .onTapGesture { onNo() }
 
             VStack(spacing: 20) {
-                Text("are you sure?")
+                Text(message)
                     .font(.specialElite(size: 18))
                     .foregroundColor(HallwaysTheme.text)
                     .multilineTextAlignment(.center)
@@ -215,13 +298,8 @@ struct WritingEditorView: View {
                     .padding(.horizontal, 20)
 
                 HStack(spacing: 12) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            showCancelConfirm = false
-                        }
-                        onCancel()
-                    } label: {
-                        Text("yes")
+                    Button(action: onYes) {
+                        Text(yesLabel)
                             .font(.specialElite(size: 16))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
@@ -232,12 +310,8 @@ struct WritingEditorView: View {
                             )
                     }
 
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            showCancelConfirm = false
-                        }
-                    } label: {
-                        Text("no")
+                    Button(action: onNo) {
+                        Text(noLabel)
                             .font(.specialElite(size: 16))
                             .foregroundColor(HallwaysTheme.text)
                             .frame(maxWidth: .infinity)
@@ -267,6 +341,8 @@ struct WritingEditorView: View {
         didLoadInitial = true
         if let piece = mode.existingPiece, let content = piece.textContent {
             text = content
+        } else if let initial = mode.initialBranchText {
+            text = initial
         }
     }
 
